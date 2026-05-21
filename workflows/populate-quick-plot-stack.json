@@ -1,20 +1,15 @@
 {
   "name": "populate-quick-plot-stack",
   "summary": "One-time: populate quick-plot-stack EFS layer",
-  "description": "Pip-installs the scientific Python stack into the `quick-plot-stack` EFS layer for use by the `quick-plot` workflow. Triggered manually via POST /runs.",
+  "description": "Pip-installs the scientific Python stack into the `quick-plot-stack` EFS layer for use by the `quick-plot` workflow. Triggered manually via POST /runs. The EFS layer must be created first via POST /compute-nodes/{nodeId}/layers (status EMPTY); this workflow populates it.",
   "organizationId": "N:organization:050fae39-4412-43ef-a514-703ed8e299d5",
   "processors": [
-    {
-      "id": "trigger",
-      "type": "data-source"
-    },
     {
       "id": "python-layer-builder",
       "type": "processor",
       "sourceUrl": "https://github.com/Pennsieve/processor-build-python-layer",
       "tag": "v0.1.0",
       "computeType": "standard",
-      "dependsOn": ["trigger"],
       "defaultParams": {
         "PYTHON_VERSION": "3.12",
         "REQUIREMENTS": "matplotlib\nseaborn\npandas\nnumpy\nscipy\nflowkit\nfcsparser\nanndata\nscanpy\nnibabel\ntifffile\npillow\npyreadr\npyarrow\nh5py"
