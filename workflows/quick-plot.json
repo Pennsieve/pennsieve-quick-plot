@@ -1,7 +1,8 @@
 {
   "name": "quick-plot",
-  "description": "Generate a matplotlib figure from a user prompt against a target data file. Single Claude call inside a Lambda; ~10s end-to-end. Output is a PNG attached as a viewer-asset on the target file.",
-  "defaultComputeType": "lambda",
+  "summary": "Generate a plot from a prompt and a target file",
+  "description": "Single Claude call inside a Lambda. The processor reads the target file from EFS, asks the LLM Governor for a Python plotting script, runs it against the `quick-plot-stack` EFS layer, and attaches the resulting PNG as a viewer-asset on the target package. ~10s end-to-end.",
+  "organizationId": "N:organization:050fae39-4412-43ef-a514-703ed8e299d5",
   "processors": [
     {
       "id": "target-file",
@@ -11,14 +12,19 @@
       "id": "quick-plot-processor",
       "type": "processor",
       "sourceUrl": "https://github.com/Pennsieve/pennsieve-quick-plot",
-      "dependsOn": ["target-file"],
-      "defaultParams": {}
+      "tag": "v0.1.0",
+      "computeType": "lambda",
+      "dependsOn": ["target-file"]
     },
     {
       "id": "figure-asset",
       "type": "data-target",
-      "targetType": "viewer-asset",
-      "dependsOn": ["quick-plot-processor"]
+      "targetType": "Pennsieve Package Asset",
+      "dependsOn": ["quick-plot-processor"],
+      "defaultParams": {
+        "ASSET_TYPE": "PNG",
+        "ASSET_NAME": "quick-plot"
+      }
     }
   ]
 }
