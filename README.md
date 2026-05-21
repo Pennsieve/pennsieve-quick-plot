@@ -79,9 +79,12 @@ For local LLM calls, set `LLM_GOVERNOR_URL` in `dev.env` to a real Function URL 
 | `LLM_GOVERNOR_URL` | container override | event payload `llmGovernorFunction` | Lambda Function URL of the LLM Governor |
 | `INTEGRATION_ID` | container override | event payload `integrationId` | Workflow run identifier |
 | `SESSION_TOKEN` | container override | event payload `sessionToken` | API session token |
-| `MAX_RETRIES` | container override | function config | Number of LLM retries on script failure. Default 1. |
-| `SCRIPT_TIMEOUT_SECONDS` | container override | function config | Per-execution timeout for the generated script. Default 120. |
+| `AGENT_MAX_ITERATIONS` | container override | function config | Cap on model ↔ tool round-trips per run. Default 20. |
+| `AGENT_BASH_TIMEOUT_SECONDS` | container override | function config | Per-`bash` tool call timeout. Default 60. |
+| `AGENT_TOOL_OUTPUT_MAX_BYTES` | container override | function config | Truncate tool output before feeding back to the model. Default 16384. |
+| `SCRIPT_TIMEOUT_SECONDS` | container override | function config | Per-execution timeout for STUB_MODE scripts only. Default 120. |
 | `QUICK_PLOT_STACK_SITE_PACKAGES` | container override | function config | Override the EFS layer mount path (defaults to `/mnt/layers/quick-plot-stack/lib/python3.12/site-packages`). |
+| `STUB_MODE` | container override | function config | When `1`, bypass the agent loop and run a built-in stub script (used to smoke-test the EFS-layer + viewer-asset chain). |
 | `PENNSIEVE_API_HOST`, `PENNSIEVE_API_HOST2`, `ENVIRONMENT`, `REGION`, `DEPLOYMENT_MODE` | container override | function config (static) | Platform standards |
 
 ## Outputs
@@ -89,9 +92,9 @@ For local LLM calls, set `LLM_GOVERNOR_URL` in `dev.env` to a real Function URL 
 After a successful run, `OUTPUT_DIR/` contains:
 
 - `figure.png` — the matplotlib figure (required)
-- `script.py` — the LLM-generated Python script that produced it (kept for transparency / debugging)
+- Any intermediate scripts / files the agent chose to persist via `write_file` (kept for transparency / debugging; not required)
 
-The `viewer-asset` data-target node downstream picks up `figure.png` and attaches it as a viewer-asset on the target file. The script is also attached so users can see how the figure was made.
+The `viewer-asset` data-target node downstream picks up `figure.png` and attaches it as a viewer-asset on the target file.
 
 ## EFS layer dependency
 
@@ -109,35 +112,33 @@ The layer is provisioned and populated separately (see workflow-service docs on 
 
 ## LLM Governor integration
 
-The processor uses `pennsieve-llm` (the Python client SDK) which returns a pre-configured `anthropic.Anthropic` client pointed at the governor's Lambda Function URL with SigV4 auth wired up.
-
-Key fact: **the governor reads files from EFS server-side via `efs_document(path)` content blocks**, so the processor passes the target file path to the LLM directly — no base64 round-tripping. The LLM can inspect the file's structure (headers, shape) before writing the script.
+The processor uses `pennsieve-llm` (the Python client SDK) which returns a real `anthropic.Anthropic` client pointed at the governor's Lambda Function URL with SigV4 auth wired up. The agent loop (see `processor/agent.py`) calls `client.messages.create` with `tools=[...]` per the Anthropic Messages API — the governor passes tool-use / tool-result blocks through unchanged (see `compute-node-aws-provisioner-v2/cmd/llm-governor/anthropic.go`).
 
 ```python
 from pennsieve_llm import Governor, MODEL_SONNET_45
 
-gov = Governor()  # auto-configures from $LLM_GOVERNOR_URL + AWS creds
+gov = Governor()
 resp = gov.client().messages.create(
     model=MODEL_SONNET_45,
     max_tokens=4096,
-    system=SYSTEM_PROMPT,
-    messages=[{"role": "user", "content": [
-        {"type": "text", "text": user_message},
-        gov.efs_document(target_file_path),
-    ]}],
+    system=AGENT_SYSTEM_PROMPT,
+    tools=[bash_tool, read_file_tool, write_file_tool],
+    messages=[...],  # accumulated transcript (user prompt → tool_use / tool_result loop)
 )
 ```
+
+The agent inspects the target file with shell + Python first, then writes plotting code grounded in actual data. Single-shot script generation (v0.x) was retired because it hallucinated columns / schemas on novel file types — see commit message and `processor/agent.py` docstring for the full rationale.
 
 ## Failure modes
 
 | Failure | Exit code | Behavior |
 |---|---|---|
-| `LLM_GOVERNOR_URL` not set | 1 | Clear error; no LLM call attempted |
-| LLM call fails (budget exhausted, network, etc.) | 1 | Error from `pennsieve-llm`; logged and bubbled up |
-| Script raises an exception | retries up to `MAX_RETRIES` | Traceback fed back to LLM via retry message |
-| Script doesn't produce `figure.png` despite exiting 0 | retries up to `MAX_RETRIES` | Treated as failure; LLM asked to fix |
-| Script exceeds `SCRIPT_TIMEOUT_SECONDS` | retries up to `MAX_RETRIES` | Timeout error fed back to LLM |
-| All retries fail | 1 | Last-attempt script and error are in `OUTPUT_DIR/script.py` and stderr |
+| `LLM_GOVERNOR_URL` not set | 1 | Clear error from `pennsieve-llm`; no LLM call attempted |
+| LLM call fails mid-loop (budget exhausted, network, etc.) | 1 | Error logged with iteration count; loop terminates |
+| Agent calls a tool with bad input (e.g. `read_file` outside WORKDIR) | continues | Tool returns an `is_error: true` result; agent can recover |
+| Agent script crashes inside `bash` | continues | Non-zero exit + stderr fed back to the model |
+| Agent emits `end_turn` without `figure.png` | 1 | Treated as failure; no further retries — model declared completion |
+| Agent hits `AGENT_MAX_ITERATIONS` | 1 | Loop terminates without `end_turn`; failure logged |
 
 ## TODO (scaffold-only items)
 

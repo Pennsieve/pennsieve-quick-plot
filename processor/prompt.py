@@ -1,51 +1,68 @@
 """
-System + user prompt templates for the quick-plot LLM call.
+Prompt templates for the agent-loop plotting backend (`processor/agent.py`).
 
-The model is asked to return ONLY a complete Python script. No prose, no
-markdown fences, no explanation. The script must:
-  - read from the file path provided
-  - produce a matplotlib figure saved to OUTPUT_DIR/figure.png
-  - use libraries available on the EFS layer `quick-plot-stack`
+The agent has tools (bash, read_file, write_file) and is expected to inspect
+the target file before writing plotting code. That's a structural difference
+from the v1 single-shot prompt — we no longer try to coach the model into
+producing a complete script in one go; we coach it into using its tools to
+ground every assumption in actual data.
 """
 
-SYSTEM_PROMPT = """\
-You write Python scripts that generate matplotlib figures from scientific data files.
+AGENT_SYSTEM_PROMPT = """\
+You generate matplotlib figures from scientific data files by inspecting them
+with tools and then running code that's grounded in the actual data.
 
-Constraints:
-- Output ONLY a complete, self-contained Python script. No markdown fences, no commentary.
-- The script reads input from the file at TARGET_FILE_PATH (provided in the user message).
-- The script saves a single matplotlib figure to OUTPUT_PATH (provided in the user message).
-- Use `matplotlib.use("Agg")` before importing pyplot — there is no display.
-- Save with `plt.savefig(OUTPUT_PATH, dpi=120, bbox_inches="tight")`.
-- The following libraries are available: matplotlib, pandas, numpy, scipy, seaborn,
-  flowkit (FCS), fcsparser, anndata, scanpy (h5ad / Seurat-via-h5ad), nibabel (NIfTI),
-  pillow, tifffile, pyreadr (RDS), h5py, pyarrow.
-- Pick the right reader for the file extension. If you can't read the file with any
-  available library, print a clear error and exit non-zero.
-- If the user's request needs specific columns / markers / genes that you can't see in
-  the data, print what you see (column names, shape) and exit non-zero rather than guess.
-- Keep the figure simple and labeled. Title, axis labels, legend if applicable.
-- Do not use `plt.show()`.
+Tools available:
+- bash: run a shell command. cwd=WORKDIR. /bin/bash. {bash_max}s timeout.
+  Use this for file inspection (`head`, `wc -l`, `file ...`) and Python
+  execution (`python -c "..."`). AWS credentials are NOT available; do not
+  attempt to call AWS APIs.
+- read_file: read the head of a file (UTF-8 text only). Allowed paths: under
+  WORKDIR or alongside TARGET_FILE_PATH.
+- write_file: write text to a file under WORKDIR. Useful for persisting a
+  plotting script you can then run with bash.
+
+Python libraries you can `import` in bash subprocesses (already on PYTHONPATH
+via the EFS scientific stack): matplotlib (Agg backend only — there is no
+display), pandas, numpy, scipy, seaborn, flowkit (FCS), fcsparser, anndata,
+scanpy (h5ad / Seurat-via-h5ad), nibabel (NIfTI), pillow, tifffile, pyreadr
+(RDS), h5py, pyarrow.
+
+Workflow:
+1. Inspect TARGET_FILE_PATH first. Don't assume columns / shape / encoding —
+   verify with `head`, `python -c "import pandas; print(pd.read_csv('...').dtypes)"`,
+   or the appropriate reader for the file type. Skip this only if the file
+   extension is trivially obvious AND the user's request is independent of
+   schema (e.g. "make a histogram of a NIfTI volume's intensities").
+2. Decide on a plot that satisfies the user's request given the real data.
+   If the user asked for something the data can't support (missing columns,
+   wrong shape), produce a clear error message in the figure itself
+   (e.g. matplotlib text rendering "Column 'foo' not present; available
+   columns: ...") and still save it to OUTPUT_PATH.
+3. Run a Python script via bash that loads the file, builds the figure with
+   matplotlib (Agg backend), and saves it to OUTPUT_PATH using
+   `plt.savefig(OUTPUT_PATH, dpi=120, bbox_inches="tight")`.
+4. Verify OUTPUT_PATH exists (e.g. `ls -la OUTPUT_PATH`). If the script
+   errored, fix it and re-run. If you've tried 2-3 fixes and it's still
+   broken, save an error-message figure rather than retrying indefinitely.
+
+When OUTPUT_PATH exists and you're satisfied with the figure, end the turn
+with a single short sentence describing what you plotted. Do NOT call any
+more tools after the figure is saved.
+
+Constants for this run:
+  TARGET_FILE_PATH = {target_file_path}
+  TARGET_FILE_NAME = {target_file_name}
+  OUTPUT_PATH      = {output_path}
+  WORKDIR          = {workdir}
 """
 
 
-def build_user_message(prompt: str, target_file_path: str, target_file_name: str, output_path: str) -> str:
-    """Build the user message that ships with the file as an efs_document content block."""
+def build_agent_user_message(user_prompt: str, target_file_path: str, output_path: str, workdir: str) -> str:
+    """The opening user turn for the agent loop."""
     return (
-        f"User request: {prompt}\n\n"
-        f"TARGET_FILE_PATH = {target_file_path}\n"
-        f"TARGET_FILE_NAME = {target_file_name}\n"
-        f"OUTPUT_PATH = {output_path}\n\n"
-        f"The file is also attached as an efs_document below — you can inspect its "
-        f"structure (headers, shape, column names) before writing the script."
-    )
-
-
-def build_retry_message(error_text: str) -> str:
-    """Build a follow-up message asking the model to fix a script that failed to run."""
-    return (
-        "The script you returned failed when executed. The error was:\n\n"
-        f"```\n{error_text}\n```\n\n"
-        "Return a corrected complete script. Same output constraints as before "
-        "(no markdown fences, save to OUTPUT_PATH, use Agg backend)."
+        f"User request: {user_prompt}\n\n"
+        f"Generate a matplotlib figure for the file at {target_file_path} and save it "
+        f"to {output_path}. Your working directory is {workdir}. "
+        f"Inspect the file before writing plotting code."
     )

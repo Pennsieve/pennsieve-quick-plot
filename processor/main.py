@@ -2,11 +2,16 @@
 Quick-plot processor — ECS/local entry point.
 
 Reads the target file path + user prompt from env vars (or, in Lambda mode,
-from event-payload-bridged env vars set by handler.py), asks the LLM Governor
-for a Python plotting script, runs the script in a subprocess against the EFS
-scientific-Python layer, and writes /OUTPUT_DIR/figure.png.
+from event-payload-bridged env vars set by handler.py), runs an agent loop
+that uses bash/read_file/write_file tools (via the LLM Governor) to inspect
+the input file and generate a matplotlib figure at /OUTPUT_DIR/figure.png.
 
-On script error, retries ONCE with the traceback fed back to the LLM.
+The agent loop replaces the previous single-shot script-generation backend
+(see processor/agent.py for the full rationale). In short: single-shot
+generation hallucinated columns / schemas on novel files. An agent that can
+`head file.csv` or `python -c "..."` before writing the plot grounds every
+assumption in real data and generalizes to any supported file type without
+per-type preview extractors.
 """
 
 import logging
@@ -22,13 +27,11 @@ logging.basicConfig(
 )
 log = logging.getLogger("quick-plot")
 
-MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "1"))
 FIGURE_FILENAME = "figure.png"
-SCRIPT_FILENAME = "script.py"
 
-# When set to "1", bypass the LLM and use the built-in stub script in
-# processor/stub_script.py. Used for early smoke-tests of the EFS layer
-# mount + viewer-asset data-target chain before the LLM path is wired up.
+# When set to "1", bypass the LLM entirely and use the built-in stub script
+# in processor/stub_script.py. Used for smoke-tests of the EFS layer mount +
+# viewer-asset data-target chain without burning LLM tokens.
 STUB_MODE = os.environ.get("STUB_MODE", "") == "1"
 
 
@@ -88,75 +91,60 @@ def run():
 
     # Resolve input file
     target_file_path = resolve_target_file(config["input_dir"], config["target_file_name"])
-    target_file_name = os.path.basename(target_file_path)
     output_path = os.path.join(config["output_dir"], FIGURE_FILENAME)
-    script_out_path = os.path.join(config["output_dir"], SCRIPT_FILENAME)
 
     log.info("Target file: %s", target_file_path)
     log.info("Prompt: %s", config["prompt"])
     log.info("Figure → %s", output_path)
 
-    from processor.executor import execute_script
-
-    # Stub mode short-circuits the LLM call. Used to smoke-test the
+    # Stub mode short-circuits the agent loop. Used to smoke-test the
     # EFS-layer mount + viewer-asset attachment without the LLM in the loop.
     if STUB_MODE:
-        log.info("STUB_MODE=1 — bypassing LLM, using built-in stub script")
+        log.info("STUB_MODE=1 — bypassing agent, using built-in stub script")
+        from processor.executor import execute_script
         from processor.stub_script import build_stub_script
+
         script = build_stub_script(target_file_path, output_path)
-        with open(script_out_path, "w") as f:
-            f.write(script)
         result = execute_script(script, output_path)
         if result.success:
             log.info(
                 "Figure produced: %s (%d bytes, %.2fs total)",
-                output_path, result.output_size, time.time() - start
+                output_path, result.output_size, time.time() - start,
             )
-            log.info("Script saved: %s", script_out_path)
             return
         log.error("Stub script failed:\n%s", result.stderr)
         sys.exit(1)
 
-    # Lazy import so the module loads even without pennsieve_llm installed in dev contexts
-    from processor.llm import generate_script
+    # Agent loop — inspect + plot via tool calls.
+    from processor.agent import run_agent
+    from processor.executor import resolve_layer_site_packages  # reuse path resolver
 
-    previous_error = None
-    previous_script = None
+    # Workdir = OUTPUT_DIR. The agent saves the final figure there and may
+    # write intermediate scripts / artifacts alongside it. Everything in the
+    # workdir is harvested by the figure-asset data-target after we exit.
+    workdir = config["output_dir"]
 
-    for attempt in range(MAX_RETRIES + 1):
-        log.info("--- Attempt %d / %d ---", attempt + 1, MAX_RETRIES + 1)
+    result = run_agent(
+        user_prompt=config["prompt"],
+        target_file_path=target_file_path,
+        output_path=output_path,
+        workdir=workdir,
+        layer_site_packages=resolve_layer_site_packages(),
+    )
 
-        try:
-            script = generate_script(
-                user_prompt=config["prompt"],
-                target_file_path=target_file_path,
-                target_file_name=target_file_name,
-                output_path=output_path,
-                previous_error=previous_error,
-                previous_script=previous_script,
-            )
-        except Exception as e:
-            log.error("LLM call failed: %s", e)
-            sys.exit(1)
+    if result.success:
+        log.info(
+            "Figure produced: %s (%d bytes, %d iterations, %.2fs total)",
+            output_path, result.output_size, result.iterations, time.time() - start,
+        )
+        if result.final_text:
+            log.info("Agent summary: %s", result.final_text)
+        return
 
-        # Persist the script for transparency / debugging — overwritten each attempt
-        with open(script_out_path, "w") as f:
-            f.write(script)
-
-        result = execute_script(script, output_path)
-        if result.success:
-            log.info(
-                "Figure produced: %s (%d bytes, %.2fs total)",
-                output_path, result.output_size, time.time() - start
-            )
-            log.info("Script saved: %s", script_out_path)
-            return
-
-        log.warning("Attempt %d failed", attempt + 1)
-        previous_error = result.stderr
-        previous_script = script
-
-    log.error("All %d attempts failed. Last error:\n%s", MAX_RETRIES + 1, previous_error)
+    log.error(
+        "Agent loop failed after %d iterations: %s",
+        result.iterations, result.error or "(no error message)",
+    )
     sys.exit(1)
 
 

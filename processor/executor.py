@@ -33,7 +33,7 @@ LAYER_NAME = os.environ.get("QUICK_PLOT_LAYER_NAME", "quick-plot-stack")
 LAYER_PYTHON_VERSION = os.environ.get("QUICK_PLOT_LAYER_PYTHON_VERSION", "3.12")
 
 
-def _resolve_layer_site_packages() -> str:
+def resolve_layer_site_packages() -> str:
     """Compute the absolute path to the layer's site-packages directory."""
     # Explicit override wins
     direct = os.environ.get("QUICK_PLOT_STACK_SITE_PACKAGES", "").strip()
@@ -47,7 +47,7 @@ def _resolve_layer_site_packages() -> str:
     return f"/mnt/layers/{LAYER_NAME}/lib/python{LAYER_PYTHON_VERSION}/site-packages"
 
 
-EFS_LAYER_SITE_PACKAGES = _resolve_layer_site_packages()
+EFS_LAYER_SITE_PACKAGES = resolve_layer_site_packages()
 
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("SCRIPT_TIMEOUT_SECONDS", "120"))
 
