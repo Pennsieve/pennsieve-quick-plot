@@ -1,0 +1,25 @@
+{
+  "name": "populate-quick-plot-stack",
+  "description": "One-time layer-population workflow: pip-install the scientific Python stack into the quick-plot-stack EFS layer. Triggered manually by admin via POST /runs. Re-run to update the layer's contents (subject to workflow-service's layer-versioning model — see open questions in plan doc).",
+  "defaultComputeType": "standard",
+  "processors": [
+    {
+      "id": "python-layer-builder",
+      "type": "processor",
+      "sourceUrl": "https://github.com/Pennsieve/processor-build-python-layer",
+      "defaultParams": {
+        "python_version": "3.12",
+        "requirements": "matplotlib\nseaborn\npandas\nnumpy\nscipy\nflowkit\nfcsparser\nanndata\nscanpy\nnibabel\ntifffile\npillow\npyreadr\npyarrow\nh5py"
+      }
+    },
+    {
+      "id": "quick-plot-stack-layer",
+      "type": "data-target",
+      "targetType": "persistent-layer",
+      "dependsOn": ["python-layer-builder"],
+      "params": {
+        "layer_name": "quick-plot-stack"
+      }
+    }
+  ]
+}

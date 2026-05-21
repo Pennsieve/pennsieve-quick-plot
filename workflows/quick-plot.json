@@ -1,0 +1,24 @@
+{
+  "name": "quick-plot",
+  "description": "Generate a matplotlib figure from a user prompt against a target data file. Single Claude call inside a Lambda; ~10s end-to-end. Output is a PNG attached as a viewer-asset on the target file.",
+  "defaultComputeType": "lambda",
+  "processors": [
+    {
+      "id": "target-file",
+      "type": "data-source"
+    },
+    {
+      "id": "quick-plot-processor",
+      "type": "processor",
+      "sourceUrl": "https://github.com/Pennsieve/pennsieve-quick-plot",
+      "dependsOn": ["target-file"],
+      "defaultParams": {}
+    },
+    {
+      "id": "figure-asset",
+      "type": "data-target",
+      "targetType": "viewer-asset",
+      "dependsOn": ["quick-plot-processor"]
+    }
+  ]
+}

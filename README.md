@@ -34,6 +34,10 @@ processor/
   llm.py            # Pennsieve LLM Governor wrapper (calls anthropic SDK via SigV4 to Function URL)
   executor.py       # subprocess that runs the LLM-generated script with EFS layer on PYTHONPATH
   requirements.txt  # awslambdaric, pennsieve-llm, boto3 (heavy deps live on the EFS layer)
+workflows/
+  quick-plot.json                    # main workflow definition (Lambda; the v1 product)
+  populate-quick-plot-stack.json     # one-time layer-population workflow (Fargate; admin-triggered)
+  README.md                          # deployment notes for the JSONs
 entrypoint.sh       # Runtime detection (Lambda vs ECS)
 Dockerfile          # Slim python 3.12 image with Lambda RIC
 docker-compose.yml  # Local dev runner
@@ -43,6 +47,15 @@ data/
   input/            # Sample input files for local testing
   output/           # Output dir (gitignored except .gitkeep)
 ```
+
+## Workflow definitions
+
+The workflow definitions consumed by `workflow-service` live in `workflows/`:
+
+- **`quick-plot.json`** — the main workflow this repo's processor implements. Lambda + viewer-asset data-target.
+- **`populate-quick-plot-stack.json`** — one-time layer-population workflow. Uses `processor-build-python-layer` (a separate repo) + `persistent-layer` data-target to install the scientific Python stack into the `quick-plot-stack` EFS layer.
+
+Workflow definition registration is API-only in workflow-service today — the JSONs are POSTed to `/definitions` at deploy time. See [`workflows/README.md`](workflows/README.md) for details and open questions.
 
 ## Local development
 
