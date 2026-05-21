@@ -26,6 +26,11 @@ MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "1"))
 FIGURE_FILENAME = "figure.png"
 SCRIPT_FILENAME = "script.py"
 
+# When set to "1", bypass the LLM and use the built-in stub script in
+# processor/stub_script.py. Used for early smoke-tests of the EFS layer
+# mount + viewer-asset data-target chain before the LLM path is wired up.
+STUB_MODE = os.environ.get("STUB_MODE", "") == "1"
+
 
 def get_config():
     return {
@@ -75,7 +80,7 @@ def run():
     if not config["input_dir"] or not config["output_dir"]:
         log.error("INPUT_DIR and OUTPUT_DIR are required")
         sys.exit(1)
-    if not config["prompt"]:
+    if not config["prompt"] and not STUB_MODE:
         log.error("PROMPT is required (the user's plain-English request)")
         sys.exit(1)
 
@@ -91,9 +96,29 @@ def run():
     log.info("Prompt: %s", config["prompt"])
     log.info("Figure → %s", output_path)
 
+    from processor.executor import execute_script
+
+    # Stub mode short-circuits the LLM call. Used to smoke-test the
+    # EFS-layer mount + viewer-asset attachment without the LLM in the loop.
+    if STUB_MODE:
+        log.info("STUB_MODE=1 — bypassing LLM, using built-in stub script")
+        from processor.stub_script import build_stub_script
+        script = build_stub_script(target_file_path, output_path)
+        with open(script_out_path, "w") as f:
+            f.write(script)
+        result = execute_script(script, output_path)
+        if result.success:
+            log.info(
+                "Figure produced: %s (%d bytes, %.2fs total)",
+                output_path, result.output_size, time.time() - start
+            )
+            log.info("Script saved: %s", script_out_path)
+            return
+        log.error("Stub script failed:\n%s", result.stderr)
+        sys.exit(1)
+
     # Lazy import so the module loads even without pennsieve_llm installed in dev contexts
     from processor.llm import generate_script
-    from processor.executor import execute_script
 
     previous_error = None
     previous_script = None

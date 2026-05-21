@@ -38,6 +38,7 @@ _PAYLOAD_TO_ENV = {
     "llmGovernorFunction": "LLM_GOVERNOR_URL",
     "prompt": "PROMPT",
     "target_file_name": "TARGET_FILE_NAME",
+    "stub_mode": "STUB_MODE",
 }
 
 
