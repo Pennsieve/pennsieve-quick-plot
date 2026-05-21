@@ -1,0 +1,8 @@
+# Lambda Runtime Interface Client (for dual-mode container)
+awslambdaric
+
+# Pennsieve LLM Governor SDK — provides Governor(), gov.client(), efs_document(...)
+pennsieve-llm
+
+# AWS SDK (for any direct boto3 calls the processor may need)
+boto3
