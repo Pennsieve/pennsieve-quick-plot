@@ -89,7 +89,34 @@ curl -X POST "$BASE/runs" -H "Authorization: Bearer $TOKEN" \
 | Workflow | Definition UUID | Notes |
 |---|---|---|
 | `populate-quick-plot-stack` (no data-source) | `6f7345f8-9f45-4b9c-9362-f43c857ce3f8` | Successfully populated `quick-plot-stack` layer (14,869 files, 792 MB) — run UUID `fe0574e7-449a-481d-9f2f-cabe209be11d` |
-| `quick-plot` | `505c3b41-717c-4e9a-aba0-0681083ffc88` | Definition registered; not yet end-to-end run |
+| `quick-plot` (v0.2.1 + stub_mode) | `505c3b41-717c-4e9a-aba0-0681083ffc88` | End-to-end smoke test succeeded in 31s — run UUID `1de1fee4-e865-44f8-9785-d096583cb5f5`. Viewer-asset `a32c18ec-225f-428f-b868-22c2fda87b41` attached to package `971f22e1-0b79-41f0-9b9c-4fb9e5ae4fa1` in dataset `74aa3052-fab2-467b-a71f-fa19e493b1c0`. |
+
+### Sample run payload for `quick-plot` (stub-mode smoke test)
+
+```json
+{
+  "workflowInstanceConfiguration": {
+    "workflowId": "505c3b41-717c-4e9a-aba0-0681083ffc88",
+    "computeNodeId": "<compute-node-uuid>",
+    "processorConfigs": [
+      {"nodeId": "quick-plot-processor", "version": "v0.2.1", "executionTarget": "lambda"}
+    ]
+  },
+  "datasetId": "<dataset where user has write permission>",
+  "dataSources": {
+    "target-file": { "packageIds": ["<csv-or-other-readable-package>"] }
+  },
+  "dataTargets": {
+    "figure-asset": { "params": { "ASSET_TYPE": "PNG", "ASSET_NAME": "quick-plot-smoke" } }
+  },
+  "processorParams": {
+    "quick-plot-processor": { "stub_mode": "1" }
+  },
+  "layers": ["quick-plot-stack"]
+}
+```
+
+**Required permission**: the user (whose token POSTs the run) must have **write permission (editor/manager/owner) on the target dataset**. The data-target Lambda creates a viewer-asset via `POST /packages/assets` which requires write — a viewer-only role returns 401 from packages-service's business logic (not from the authorizer). Verified by reading the run's claims: `DatasetClaim.Role: 2` failed; the same user with manager/owner role on a different dataset succeeded.
 
 (There's also an older `populate-quick-plot-stack` at `4c23010f-...` with a `trigger` data-source — superseded by the no-source version above, since data-source nodes require non-empty packageIds at run time which makes no sense for a layer-population workflow.)
 
