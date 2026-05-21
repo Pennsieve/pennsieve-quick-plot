@@ -2,11 +2,15 @@
 Thin wrapper around the Pennsieve LLM Governor.
 
 Uses `pennsieve-llm`'s `Governor` to get a pre-configured `anthropic.Anthropic`
-client pointed at the governor's Lambda Function URL with SigV4 auth wired up.
+client. The SDK auto-selects the right transport from env:
 
-If `LLM_GOVERNOR_URL` is unset (local dev without a real governor), `generate_script`
-raises — there is no offline LLM fallback. For local testing without the governor,
-hand-write a script and skip this module.
+  - `LLM_GOVERNOR_FUNCTION_NAME` (preferred — direct Lambda invoke against the
+    compute-node-local governor; no Function URL needed; private AWS APIs only)
+  - `LLM_GOVERNOR_URL` (legacy HTTPS + SigV4 path)
+  - `PENNSIEVE_LLM_MOCK=1` (opt-in mock for local dev)
+
+If none are set the SDK raises GovernorError at construction time — that's the
+right behavior. There's no offline LLM fallback in this processor by design.
 """
 
 import logging
@@ -39,22 +43,15 @@ def generate_script(
       A Python script as a string. Caller is responsible for executing it.
 
     Raises:
-      RuntimeError: if LLM_GOVERNOR_URL is unset, or the governor call fails.
+      RuntimeError: if the governor SDK can't configure a backend, or the call fails.
     """
-    governor_url = os.environ.get("LLM_GOVERNOR_URL", "")
-    if not governor_url:
-        raise RuntimeError(
-            "LLM_GOVERNOR_URL not set. The processor needs a governor URL to call the LLM. "
-            "Set it via env var (production: injected by platform; local dev: configure manually)."
-        )
-
     # Import inside the function so the module loads even when pennsieve_llm isn't installed
     # (the requirements.txt installs it; this guard helps with linting / partial installs).
     from pennsieve_llm import Governor, MODEL_SONNET_45  # type: ignore
 
     from processor.prompt import SYSTEM_PROMPT, build_user_message, build_retry_message
 
-    gov = Governor()  # auto-configures from $LLM_GOVERNOR_URL and AWS creds
+    gov = Governor()  # auto-selects LLM_GOVERNOR_FUNCTION_NAME or LLM_GOVERNOR_URL
 
     messages = [
         {
@@ -73,7 +70,12 @@ def generate_script(
         messages.append({"role": "assistant", "content": previous_script})
         messages.append({"role": "user", "content": build_retry_message(previous_error)})
 
-    log.info("Calling LLM Governor at %s (run_id=%s)", governor_url, os.environ.get("EXECUTION_RUN_ID", "?"))
+    log.info(
+        "Calling LLM Governor (run_id=%s, function=%s, url=%s)",
+        os.environ.get("EXECUTION_RUN_ID", "?"),
+        os.environ.get("LLM_GOVERNOR_FUNCTION_NAME", ""),
+        os.environ.get("LLM_GOVERNOR_URL", ""),
+    )
     resp = gov.client().messages.create(
         model=MODEL_SONNET_45,
         max_tokens=4096,
