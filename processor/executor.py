@@ -21,13 +21,33 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-# Default location of the EFS layer's site-packages.
-# In production this is mounted by the platform. In local dev, point it at a
-# venv path via env var.
-EFS_LAYER_SITE_PACKAGES = os.environ.get(
-    "QUICK_PLOT_STACK_SITE_PACKAGES",
-    "/mnt/layers/quick-plot-stack/lib/python3.12/site-packages",
-)
+# Location of the EFS layer's site-packages.
+#
+# Production: the platform injects `layersDir` in the event payload (bridged
+# to LAYERS_DIR by handler.py); it points to the per-execution layers root,
+# e.g. /mnt/efs/<computeNodeId>/<runId>/layers/. The actual site-packages
+# path is constructed as: $LAYERS_DIR/<layerName>/lib/python<version>/site-packages
+#
+# Local dev: point QUICK_PLOT_STACK_SITE_PACKAGES at a venv path directly.
+LAYER_NAME = os.environ.get("QUICK_PLOT_LAYER_NAME", "quick-plot-stack")
+LAYER_PYTHON_VERSION = os.environ.get("QUICK_PLOT_LAYER_PYTHON_VERSION", "3.12")
+
+
+def _resolve_layer_site_packages() -> str:
+    """Compute the absolute path to the layer's site-packages directory."""
+    # Explicit override wins
+    direct = os.environ.get("QUICK_PLOT_STACK_SITE_PACKAGES", "").strip()
+    if direct:
+        return direct
+    # Platform-injected per-run layers dir
+    layers_dir = os.environ.get("LAYERS_DIR", "").strip()
+    if layers_dir:
+        return os.path.join(layers_dir, LAYER_NAME, "lib", f"python{LAYER_PYTHON_VERSION}", "site-packages")
+    # Last-resort fallback for older deployments
+    return f"/mnt/layers/{LAYER_NAME}/lib/python{LAYER_PYTHON_VERSION}/site-packages"
+
+
+EFS_LAYER_SITE_PACKAGES = _resolve_layer_site_packages()
 
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("SCRIPT_TIMEOUT_SECONDS", "120"))
 
