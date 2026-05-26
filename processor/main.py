@@ -83,11 +83,29 @@ def run():
     if not config["input_dir"] or not config["output_dir"]:
         log.error("INPUT_DIR and OUTPUT_DIR are required")
         sys.exit(1)
+
+    os.makedirs(config["output_dir"], exist_ok=True)
+
+    # plot-templates workflow integration: when this processor runs as the
+    # SECOND stage (fallback after a canned template processor), the
+    # canned stage may have already produced figure.png. We treat its
+    # presence as "the figure was made, no work needed here" and exit 0,
+    # letting the data-target stage pick it up. See:
+    #   pennsieve-plot-templates/workflows/README.md#skip-mechanism-contract
+    # This is a no-op cost (~$0.0015 Lambda cold-start) but avoids the
+    # full agent loop when a canned template covered the request.
+    existing_figure = os.path.join(config["output_dir"], FIGURE_FILENAME)
+    if os.path.isfile(existing_figure) and os.path.getsize(existing_figure) > 0:
+        size = os.path.getsize(existing_figure)
+        log.info(
+            "Figure already exists at %s (%d bytes) — earlier stage produced it; "
+            "skipping agent loop.", existing_figure, size,
+        )
+        return
+
     if not config["prompt"] and not STUB_MODE:
         log.error("PROMPT is required (the user's plain-English request)")
         sys.exit(1)
-
-    os.makedirs(config["output_dir"], exist_ok=True)
 
     # Resolve input file
     target_file_path = resolve_target_file(config["input_dir"], config["target_file_name"])
