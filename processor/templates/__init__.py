@@ -32,9 +32,11 @@ from __future__ import annotations
 # curated — every entry contributes to the catalog the MCP `plot_file`
 # tool advertises in its template-argument enum, so the model's choice
 # space stays narrow and predictable.
+from processor.templates import csv_column_distributions  # noqa: E402
 from processor.templates import fcs_channel_histograms  # noqa: E402
 
 _REGISTRY: dict[str, object] = {
+    csv_column_distributions.NAME: csv_column_distributions,
     fcs_channel_histograms.NAME: fcs_channel_histograms,
 }
 
