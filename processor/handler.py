@@ -37,6 +37,7 @@ _PAYLOAD_TO_ENV = {
     "refreshToken": "REFRESH_TOKEN",
     "llmGovernorFunction": "LLM_GOVERNOR_URL",
     "layersDir": "LAYERS_DIR",
+    "template": "TEMPLATE",
     "prompt": "PROMPT",
     "target_file_name": "TARGET_FILE_NAME",
     "stub_mode": "STUB_MODE",

@@ -1,0 +1,30 @@
+{
+  "name": "plot-templates",
+  "summary": "Generate a plot from a target file — canned templates first, agent fallback (in-process)",
+  "description": "Single-stage plotting workflow. The processor (pennsieve-quick-plot) dispatches in-process between a deterministic per-format template (cheap, ~5s when `template` is set + known) and an LLM agent loop (~30s when `template` is unset, unknown, or the canned render failed). Mounts the `quick-plot-stack` EFS layer for the scientific Python deps both paths need.",
+  "organizationId": "N:organization:050fae39-4412-43ef-a514-703ed8e299d5",
+  "processors": [
+    {
+      "id": "target-file",
+      "type": "data-source"
+    },
+    {
+      "id": "quick-plot-processor",
+      "type": "processor",
+      "sourceUrl": "https://github.com/Pennsieve/pennsieve-quick-plot",
+      "tag": "v0.6.0",
+      "computeType": "lambda",
+      "dependsOn": ["target-file"]
+    },
+    {
+      "id": "figure-asset",
+      "type": "data-target",
+      "targetType": "Pennsieve Package Asset",
+      "dependsOn": ["quick-plot-processor"],
+      "defaultParams": {
+        "ASSET_TYPE": "PNG",
+        "ASSET_NAME": "quick-plot"
+      }
+    }
+  ]
+}
