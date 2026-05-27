@@ -6,14 +6,22 @@ This is the v1 workflow described in [`compute-node-chat/docs/developer/plan-not
 
 ## What it does
 
+Two render paths share this single processor; the canned path is tried first when a `TEMPLATE` env var is set, and falls back to the LLM agent loop on any failure:
+
 ```
-prompt + file ──▶ LLM generates Python ──▶ subprocess runs against EFS layer ──▶ figure.png
-                  (single Claude call,                                            (picked up by
-                   1 retry on error,                                              viewer-asset
-                   ~$0.10-0.50)                                                   data-target)
+                ┌──── TEMPLATE set + known ────▶  canned template  ──┐
+file + args ────┤                                 (~5–10s, ~$0.001) │
+                └──── TEMPLATE unset / unknown ──▶  LLM agent loop ──┴──▶ figure.png
+                                                  (~30s, ~$0.15)         │
+                                                                         ▼
+                                                                  (picked up by
+                                                                   viewer-asset
+                                                                   data-target)
 ```
 
-End-to-end: ~10 seconds. The user sees the figure inline in chat via the `plot_file` MCP tool.
+End-to-end: **~10 seconds** when a template covers the request, **~30 seconds** when the agent runs. The user sees the figure inline in chat via the `plot_file` MCP tool.
+
+History: this processor started as agent-only (single-shot Claude call → ran the script). [v0.6.0](https://github.com/Pennsieve/pennsieve-quick-plot/releases/tag/v0.6.0) added the canned-template path. Templates live in [`processor/templates/`](processor/templates/) — see [Adding a canned template](#adding-a-canned-template).
 
 ## Dual-mode architecture
 
@@ -28,18 +36,23 @@ The processor logic in `main.py` is identical in both modes.
 
 ```
 processor/
-  main.py           # ECS/local entry — orchestrates the flow
+  main.py           # ECS/local entry — try canned, else fall through to agent
   handler.py        # Lambda handler — event → env vars → main.run()
-  prompt.py         # System prompt + user-message builder for the LLM
-  llm.py            # Pennsieve LLM Governor wrapper (calls anthropic SDK via SigV4 to Function URL)
-  executor.py       # subprocess that runs the LLM-generated script with EFS layer on PYTHONPATH
+  prompt.py         # Agent system prompt + user-message builder
+  llm.py            # Pennsieve LLM Governor wrapper (anthropic SDK + SigV4)
+  executor.py       # subprocess that runs the agent's generated script with EFS layer on PYTHONPATH
   requirements.txt  # awslambdaric, pennsieve-llm, boto3 (heavy deps live on the EFS layer)
+  templates/        # canned per-format render functions (no LLM)
+    __init__.py     # registry — { NAME → module }
+    csv_column_distributions.py
+    fcs_channel_histograms.py
 workflows/
-  quick-plot.json                    # main workflow definition (Lambda; the v1 product)
+  plot-templates.json                # main workflow (single-stage; Lambda; the v0.6+ product)
+  quick-plot.json                    # legacy agent-only workflow (kept for backwards compat)
   populate-quick-plot-stack.json     # one-time layer-population workflow (Fargate; admin-triggered)
   README.md                          # deployment notes for the JSONs
 entrypoint.sh       # Runtime detection (Lambda vs ECS)
-Dockerfile          # Slim python 3.12 image with Lambda RIC
+Dockerfile          # Slim python 3.12 image with Lambda RIC + MPLCONFIGDIR=/tmp/matplotlib
 docker-compose.yml  # Local dev runner
 dev.env             # Local env vars
 Makefile            # make build / run / clean
@@ -47,6 +60,75 @@ data/
   input/            # Sample input files for local testing
   output/           # Output dir (gitignored except .gitkeep)
 ```
+
+## Adding a canned template
+
+A "canned template" is a per-format Python function that renders a summary plot deterministically — no LLM in the loop. The MCP `plot_file` tool dispatches to one when its caller sets `template: <name>`; failures fall through to the agent loop automatically.
+
+Adding one is three small steps. Total work: ~50 lines of Python + one MCP enum entry.
+
+### 1. Write the template
+
+Drop a new module in `processor/templates/`. The contract:
+
+```python
+# processor/templates/your_template_name.py
+"""
+your_template_name — one-line summary, when to use, output shape.
+"""
+
+NAME = "your_template_name"               # the identifier the MCP enum advertises
+SUPPORTED_EXTENSIONS = (".ext1", ".ext2") # advisory; warned-not-blocked at runtime
+
+def render(target_file_path: str, output_path: str) -> None:
+    # ALL heavy imports inside render() — see "Lazy imports" below.
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import your_format_parser
+
+    data = your_format_parser.load(target_file_path)
+    # ... build figure ...
+    fig.savefig(output_path, dpi=110, bbox_inches="tight")
+    plt.close(fig)
+```
+
+Raise on failure (missing data, parse error, format mismatch). The dispatcher catches and falls through to the agent — that's the safety net.
+
+### 2. Register in the package
+
+Add one import + one map entry in `processor/templates/__init__.py`:
+
+```python
+from processor.templates import your_template_name  # add
+
+_REGISTRY = {
+    csv_column_distributions.NAME: csv_column_distributions,
+    fcs_channel_histograms.NAME: fcs_channel_histograms,
+    your_template_name.NAME: your_template_name,     # add
+}
+```
+
+### 3. Surface the name to the MCP tool
+
+In [`pennsieve-mcp/internal/tools/plot_file.go`](https://github.com/Pennsieve/pennsieve-mcp/blob/main/internal/tools/plot_file.go):
+
+- Add `"your_template_name"` to the `knownTemplates` slice (this populates the JSON-schema enum the model sees).
+- Add a one-line description in the `template` argument's `description` so the model knows when to pick it.
+
+Ship a `pennsieve-mcp` PR alongside the `pennsieve-quick-plot` PR, bump `QuickPlotProcessorVersion` to the next tag.
+
+### Lazy imports — strictly required
+
+`processor/templates/__init__.py` imports **every** template module at processor startup so it can build the registry. If any template did `import matplotlib` (or any other heavy import) at module top level, **every plot run** — even ones that pick a *different* template — would pay that cost.
+
+The rule:
+- Module top: `math`, stdlib, `NAME`, `SUPPORTED_EXTENSIONS`. Nothing else.
+- Inside `render()`: matplotlib, format-specific parsers, pandas, numpy, anything else.
+
+Prefer narrow import paths when a package has a heavy `__init__`. For example, `import flowkit` triggers eager imports of bokeh / gates / Session (~30s cold-start on EFS); `import flowio` (the lightweight parser flowkit wraps) imports in <1s. The v0.6.2 perf gain came from honoring this rule.
+
+If you're adding a dep that isn't already on the EFS layer, also append it to [`workflows/populate-quick-plot-stack.json`](workflows/populate-quick-plot-stack.json)'s `REQUIREMENTS` field and re-run that workflow once per compute node. Test cold-start time after — if `import yourdep` takes more than 2–3 seconds on the layer-mounted EFS, look for a lighter alternative.
 
 ## Workflow definitions
 
