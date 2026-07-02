@@ -37,6 +37,8 @@ from processor.templates import fcs_channel_histograms  # noqa: E402
 from processor.templates import fcs_compensation_heatmap  # noqa: E402
 from processor.templates import fcs_fsc_ssc_scatter  # noqa: E402
 from processor.templates import fcs_time_diagnostics  # noqa: E402
+from processor.templates import sessions_lineplot  # noqa: E402
+
 
 _REGISTRY: dict[str, object] = {
     csv_column_distributions.NAME: csv_column_distributions,
@@ -44,6 +46,7 @@ _REGISTRY: dict[str, object] = {
     fcs_compensation_heatmap.NAME: fcs_compensation_heatmap,
     fcs_fsc_ssc_scatter.NAME: fcs_fsc_ssc_scatter,
     fcs_time_diagnostics.NAME: fcs_time_diagnostics,
+    sessions_lineplot.NAME: sessions_lineplot,
 }
 
 
