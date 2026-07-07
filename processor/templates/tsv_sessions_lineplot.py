@@ -1,5 +1,5 @@
 """
-sessions_lineplot — patient age across sessions, as a line plot.
+tsv_sessions_lineplot — patient age across sessions, as a line plot.
 
 Reads a sessions TSV, pulls the session identifier and a subject-age
 column, sorts the sessions by age (ascending), and draws a single line
@@ -28,7 +28,7 @@ broken by session label) so re-renders of the same file are identical.
 ############# SET UP ##################
 from __future__ import annotations
 
-NAME = "sessions_lineplot"
+NAME = "tsv_sessions_lineplot"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".tsv",)
 
 
@@ -40,6 +40,9 @@ def _find_column(columns: list[str], *, contains: str, prefer: str) -> str | Non
     Looks for columns whose (lowercased) name contains `contains`. If one
     of them exactly matches `prefer`, that wins; otherwise the first match
     in column order is returned.
+
+    For example, if columns = ["session_id", "session_label", "subject_age", "age_at_scan"],
+    _find_column(columns, contains="session", prefer="session_id") returns session_id
     """
     matches = [c for c in columns if contains in c.lower()]
     if not matches:
