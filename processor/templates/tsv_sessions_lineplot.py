@@ -9,13 +9,18 @@ labels, no gridlines, no background fill).
 Use this when the user asks to "plot age across sessions", "show patient
 age per session", "how does age change over sessions".
 
-Column discovery is by name (case-insensitive substring):
-  - x: a column whose name contains "session" (prefers "session_id")
-  - y: a column whose name contains "age"    (prefers "subject_age")
+Column discovery, for both x and y: first an exact preferred name
+(case-insensitive), else a name-substring match whose values are all
+unique. Requiring uniqueness on the fallback skips lookalike columns like
+"session_status" that repeat and aren't identifiers.
+  - x: "session_id" / "session_name" / "session", else a unique "session"* col
+  - y: "subject_age",                              else a unique "age"* col
 
 If there is no age column, or every age value is missing / non-numeric,
 the template raises and the caller falls through to the agent loop. Same
-for a missing session column.
+for a missing session column, or when the number of plottable sessions is
+outside [MIN_SESSIONS, MAX_SESSIONS] (too few to form a line, or too many
+to label readably).
 
 Sessions files are always TSV, so the separator is fixed (tab) — unlike
 the CSV template there's no extension sniffing.
@@ -31,26 +36,43 @@ from __future__ import annotations
 NAME = "tsv_sessions_lineplot"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".tsv",)
 
+# Bounds on the number of plottable sessions (checked on the cleaned data,
+# i.e. after dropping rows with no usable age). Below MIN there's no line to
+# draw; above MAX the x-axis becomes an unreadable pile of labels. Both raise
+# so the caller falls through to the agent loop.
+MIN_SESSIONS = 2
+MAX_SESSIONS = 50
+
 
 
 ############# HELPERS ##################
-def _find_column(columns: list[str], *, contains: str, prefer: str) -> str | None:
+def _find_column(df, *, prefer: list[str], contains: str) -> str | None:
     """Return the best-matching column name, or None.
 
-    Looks for columns whose (lowercased) name contains `contains`. If one
-    of them exactly matches `prefer`, that wins; otherwise the first match
-    in column order is returned.
+    Two-step match:
+      1. `prefer` is a list of exact (case-insensitive) names tried in
+         priority order — the first column that equal to one of them AND the column that has all-unique values
+         wins. An exact-named column is trusted as-is.
+      2. `contains` is a vague match. If none of the columns match the ones in the 
+         `prefer` list, then the code would fall back to any column whose name contains
+         `contains` AND whose values are all unique. 
 
-    For example, if columns = ["session_id", "session_label", "subject_age", "age_at_scan"],
-    _find_column(columns, contains="session", prefer="session_id") returns session_id
+    Examples (columns shown in order):
+      prefer=["session_id","session_name","session"], 
+      contains="session"
+        columns = ["session_id", "session_status"]  -> return "session_id"    (exact match AND unique id)
+        columns = ["session_if_sleep_detected"]     -> return None            (non-unique, not an id)
+        columns = ["visit_session"]                 -> return "visit_session" (unique fallback)
     """
-    matches = [c for c in columns if contains in c.lower()]
-    if not matches:
-        return None
-    for c in matches:
-        if c.lower() == prefer:
+    columns = list(df.columns)
+    for name in prefer:
+        for c in columns:
+            if c.lower() == name and df[c].dropna().is_unique:
+                return c
+    for c in columns:
+        if contains in c.lower() and df[c].dropna().is_unique:
             return c
-    return matches[0]
+    return None
 
 
 
@@ -72,31 +94,49 @@ def render(target_file_path: str, output_path: str) -> None:
 
 
 ####### CLEAN DATA
-    columns = list(df.columns)
-    # find the session_id column by name 
-    session_col = _find_column(columns, contains="session", prefer="session_id")
+    # find the session column: exact 'session_id'/'session_name'/'session',
+    # else a 'session'-named column whose values are unique (an identifier).
+    session_col = _find_column(
+        df, prefer=["session_id", "session_name", "session"], contains="session"
+    )
     if session_col is None:
         raise RuntimeError(
-            "No session column found — expected a column whose name contains "
-            "'session' (e.g. 'session_id')."
+            "No session column found — expected a column named 'session_id', "
+            "'session_name', or 'session', or a 'session'-named column whose "
+            "values are unique enough to act as the identifier."
         )
-    # find the age column by name 
-    age_col = _find_column(columns, contains="age", prefer="subject_age")
+    # find the age column: find 'subject_age', "session_age", "visit_age", else a unique 'age'-named column.
+    age_col = _find_column(df, prefer=["subject_age", "session_age", "visit_age"], contains="age")
     if age_col is None:
         raise RuntimeError(
             "No age column found — expected a column whose name contains "
             "'age' (e.g. 'subject_age')."
         )
 
-    # Coerce age to numeric; anything non-numeric (e.g. "n/a") becomes NaN,
-    # then we drop those rows. If nothing survives, every age was missing.
+    # Coerce age to numeric; anything non-numeric (e.g. "n/a") becomes NaN.
+    # Drop any row missing either session or age
+    # stringify the surviving session.
     ages = pd.to_numeric(df[age_col], errors="coerce")
-    data = pd.DataFrame({"session": df[session_col].astype(str), "age": ages})
-    data = data.dropna(subset=["age"])
+    data = pd.DataFrame({"session": df[session_col], "age": ages})
+    data = data.dropna(subset=["session", "age"])
+    data["session"] = data["session"].astype(str) # needs to dropna first then stringfy 
     if data.empty:
         raise RuntimeError(
             f"Age column {age_col!r} has no usable numeric values — every "
             "row was missing / NaN / non-numeric."
+        )
+
+    # Bound the number of plottable sessions. Below MIN there's no line;
+    # above MAX the x-axis is an unreadable pile of labels.
+    if len(data) < MIN_SESSIONS:
+        raise RuntimeError(
+            f"Only {len(data)} session has a usable age — need at least "
+            f"{MIN_SESSIONS} to draw a line plot."
+        )
+    if len(data) > MAX_SESSIONS:
+        raise RuntimeError(
+            f"{len(data)} sessions with usable ages exceeds the max of "
+            f"{MAX_SESSIONS} — too many for a readable line plot."
         )
 
     # Rank sessions by age, small → large (ties broken by label so the

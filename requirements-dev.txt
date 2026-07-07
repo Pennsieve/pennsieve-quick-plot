@@ -1,0 +1,15 @@
+# Dev / CI dependencies — used to run the test suite locally and in CI.
+# NEVER shipped to production: the Lambda/ECS image installs
+# processor/requirements.txt (slim runtime deps), and the heavy scientific
+# stack (pandas, matplotlib, ...) is provided at runtime by the
+# `quick-plot-stack` EFS layer — see workflows/populate-quick-plot-stack.json.
+#
+# Install:  pip install -r requirements-dev.txt
+
+pytest
+
+# render() imports these at test time. In production they come from the EFS
+# layer, so they are intentionally absent from processor/requirements.txt;
+# we pin them here only so the tests can run on a clean dev machine / CI.
+pandas
+matplotlib
