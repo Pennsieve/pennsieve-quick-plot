@@ -41,7 +41,7 @@ SUPPORTED_EXTENSIONS: tuple[str, ...] = (".tsv",)
 # draw; above MAX the x-axis becomes an unreadable pile of labels. Both raise
 # so the caller falls through to the agent loop.
 MIN_SESSIONS = 2
-MAX_SESSIONS = 50
+MAX_SESSIONS = 20
 
 
 
