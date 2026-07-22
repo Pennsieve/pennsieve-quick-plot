@@ -13,6 +13,8 @@ The platform passes these payload keys (subset relevant to quick-plot):
 
 processorParams (per-node config, surfaced by the provisioner):
   prompt                → PROMPT
+  template              → TEMPLATE (optional)
+  template_args         → TEMPLATE_ARGS (optional; JSON object as a string)
   target_file_name      → TARGET_FILE_NAME (optional)
 
 Static env vars (PENNSIEVE_API_HOST, ENVIRONMENT, REGION, DEPLOYMENT_MODE)
@@ -38,6 +40,7 @@ _PAYLOAD_TO_ENV = {
     "llmGovernorFunction": "LLM_GOVERNOR_URL",
     "layersDir": "LAYERS_DIR",
     "template": "TEMPLATE",
+    "template_args": "TEMPLATE_ARGS",
     "prompt": "PROMPT",
     "target_file_name": "TARGET_FILE_NAME",
     "stub_mode": "STUB_MODE",
