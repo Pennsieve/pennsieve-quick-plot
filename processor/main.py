@@ -36,6 +36,7 @@ real data and generalizes to any supported file type without per-type
 preview extractors.
 """
 
+import json
 import logging
 import os
 import sys
@@ -62,6 +63,9 @@ def get_config():
         "input_dir": os.environ.get("INPUT_DIR", ""),
         "output_dir": os.environ.get("OUTPUT_DIR", ""),
         "template": os.environ.get("TEMPLATE", ""),
+        # Per-template render args as a JSON object string (or "" for none).
+        # Parsed + splatted into the template's render() by try_canned_template.
+        "template_args": os.environ.get("TEMPLATE_ARGS", ""),
         "prompt": os.environ.get("PROMPT", ""),
         "target_file_name": os.environ.get("TARGET_FILE_NAME", ""),
         "execution_run_id": os.environ.get("EXECUTION_RUN_ID", ""),
@@ -140,8 +144,32 @@ def try_canned_template(config: dict, target_file_path: str, output_path: str) -
             ext, template.NAME, template.SUPPORTED_EXTENSIONS,
         )
 
+    # Per-template render args arrive as a JSON object string (TEMPLATE_ARGS,
+    # set by MCP's plot_file from its `template_args` param). Templates that
+    # take no extra args get an empty dict and render(path, out) as before.
+    # A malformed or non-object blob is a soft failure -> agent fallback, the
+    # same contract as a render() that raises.
+    render_kwargs = {}
+    template_args = config.get("template_args", "")
+    if template_args:
+        try:
+            parsed = json.loads(template_args)
+        except (ValueError, TypeError) as exc:
+            log.warning(
+                "template_args for %r is not valid JSON (%s) — falling back to agent loop.",
+                template_name, exc,
+            )
+            return False
+        if not isinstance(parsed, dict):
+            log.warning(
+                "template_args for %r must be a JSON object, got %s — falling back to agent loop.",
+                template_name, type(parsed).__name__,
+            )
+            return False
+        render_kwargs = parsed
+
     try:
-        template.render(target_file_path, output_path)
+        template.render(target_file_path, output_path, **render_kwargs)
     except Exception as exc:  # noqa: BLE001
         log.exception(
             "Template %s raised during render: %s — falling back to agent loop.",

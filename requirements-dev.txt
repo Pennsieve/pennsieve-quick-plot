@@ -13,3 +13,7 @@ pytest
 # we pin them here only so the tests can run on a clean dev machine / CI.
 pandas
 matplotlib
+
+# EDF reader for edf_processed_timeseries. pyedflib reads EDF slices and
+# lives on the EFS layer in production.
+pyedflib

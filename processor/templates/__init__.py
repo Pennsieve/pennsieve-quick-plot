@@ -33,6 +33,7 @@ from __future__ import annotations
 # tool advertises in its template-argument enum, so the model's choice
 # space stays narrow and predictable.
 from processor.templates import csv_column_distributions  # noqa: E402
+from processor.templates import edf_processed_timeseries  # noqa: E402
 from processor.templates import fcs_channel_histograms  # noqa: E402
 from processor.templates import fcs_compensation_heatmap  # noqa: E402
 from processor.templates import fcs_fsc_ssc_scatter  # noqa: E402
@@ -42,6 +43,7 @@ from processor.templates import tsv_sessions_lineplot  # noqa: E402
 
 _REGISTRY: dict[str, object] = {
     csv_column_distributions.NAME: csv_column_distributions,
+    edf_processed_timeseries.NAME: edf_processed_timeseries,
     fcs_channel_histograms.NAME: fcs_channel_histograms,
     fcs_compensation_heatmap.NAME: fcs_compensation_heatmap,
     fcs_fsc_ssc_scatter.NAME: fcs_fsc_ssc_scatter,

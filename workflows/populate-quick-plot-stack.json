@@ -12,7 +12,7 @@
       "computeType": "standard",
       "defaultParams": {
         "PYTHON_VERSION": "3.12",
-        "REQUIREMENTS": "matplotlib\nseaborn\npandas\nnumpy\nscipy\nflowkit\nfcsparser\nanndata\nscanpy\nnibabel\ntifffile\npillow\npyreadr\npyarrow\nh5py"
+        "REQUIREMENTS": "matplotlib\nseaborn\npandas\nnumpy\nscipy\nflowkit\nfcsparser\nanndata\nscanpy\nnibabel\ntifffile\npillow\npyreadr\npyarrow\nh5py\npyedflib"
       }
     },
     {

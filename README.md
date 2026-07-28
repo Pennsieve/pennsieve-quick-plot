@@ -186,6 +186,7 @@ The processor *will not run* without the `quick-plot-stack` EFS layer mounted. T
 - Tabular: `pandas`, `numpy`, `scipy`
 - Single-cell: `anndata`, `scanpy`
 - Flow cytometry: `flowkit`, `fcsparser`
+- Electrophysiology (EDF/iEEG): `pyedflib`
 - Imaging: `nibabel`, `tifffile`, `pillow`
 - R interop: `pyreadr`
 - General: `pyarrow`, `h5py`
