@@ -34,6 +34,7 @@ import math
 
 NAME = "fcs_time_diagnostics"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".fcs",)
+SUMMARY = "channel-vs-time hexbin grid; \"is acquisition healthy / any drift\" (QC view)"
 
 MAX_EVENTS_FOR_PLOT = 100_000
 MAX_CHANNELS_FOR_PLOT = 24

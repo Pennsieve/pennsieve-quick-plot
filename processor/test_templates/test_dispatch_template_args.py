@@ -4,6 +4,8 @@ MCP's plot_file forwards as processorParams.template_args. Verifies the
 processor decodes it and splats it into the template's render(**kwargs),
 preserves non-string types, and treats a malformed / non-object blob as a
 soft failure (return False -> agent fallback).
+
+pytest processor/test_templates/test_dispatch_template_args.py
 """
 
 import json

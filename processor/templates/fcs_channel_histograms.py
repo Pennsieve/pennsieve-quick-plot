@@ -38,6 +38,7 @@ import math
 
 NAME = "fcs_channel_histograms"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".fcs",)
+SUMMARY = "per-channel marginal histograms; \"what's the distribution in each channel\""
 
 # Subsampling threshold. FCS files can carry hundreds of thousands of
 # events; we only need a representative slice for a visual summary.

@@ -34,6 +34,7 @@ import math
 
 NAME = "csv_column_distributions"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".csv", ".tsv")
+SUMMARY = "histogram grid, one per numeric column (text columns skipped)"
 
 # Caps. CSVs vary wildly in shape — we want the template to run in
 # bounded time / produce a legible plot regardless of input size.

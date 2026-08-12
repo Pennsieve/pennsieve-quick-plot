@@ -21,6 +21,7 @@ import pyedflib
 import pytest
 import matplotlib.axes
 from processor.templates import edf_processed_timeseries as template
+from processor.tools.ts_dsp import resolve_time_unit
 
 # Anchor clock for the synthetic recording (matches how a real EDF carries a
 # start-of-day time); clock-string window inputs resolve against this.
@@ -367,5 +368,44 @@ def test_render_x_label_follows_input_format(monkeypatch, tmp_path):
                     start_time="13:12:36", end_time="13:12:38",
                     y_range=100, y_unit="uV")
 
-    usym = template._TIME_SYMBOL[1e-6]  # canonical microsecond symbol
+    # canonical microsecond symbol, from the ts_dsp unit vocabulary
+    usym = resolve_time_unit("usec", required=True)[1]
     assert labels == ["time (s)", f"time ({usym})", "time (h:m:s)"]
+
+
+# TEST FOR THE DSP PIPELINE (end-to-end through render)
+# 1. a filter pipeline still produces a PNG; title/domain stay a voltage trace
+def test_render_pipeline_highpass_writes_a_png(tmp_path):
+    src = _write_edf(tmp_path / "rec.edf")
+    out = tmp_path / "figure.png"
+    template.render(src, str(out), channel="F7",
+                    start_time=0, duration=5, time_unit="s", y_range=200, y_unit="uV",
+                    pipeline=[{"tool": "highpass_filter", "params": {"cutoff": 1.0}}])
+    assert out.read_bytes().startswith(b"\x89PNG")
+
+
+# 2. a feature pipeline (energy) relabels the y-axis to the energy domain/unit
+def test_render_pipeline_energy_relabels_y_axis(monkeypatch, tmp_path):
+    src = _write_edf(tmp_path / "rec.edf")
+    ylabels = []
+    original = matplotlib.axes.Axes.set_ylabel
+
+    def spy(self, ylabel, *a, **k):
+        ylabels.append(ylabel)
+        return original(self, ylabel, *a, **k)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_ylabel", spy)
+    template.render(src, str(tmp_path / "figure.png"), channel="F7",
+                    start_time=0, duration=5, time_unit="s", y_range=200, y_unit="uV",
+                    pipeline=[{"tool": "energy",
+                               "params": {"window_size": 0.5, "window_stride": 0.5}}])
+    assert ylabels[-1] == "energy (µV²·s)"
+
+
+# 3. an invalid pipeline (unknown tool) raises — surfaced, not silently ignored
+def test_render_pipeline_unknown_tool_raises(tmp_path):
+    src = _write_edf(tmp_path / "rec.edf")
+    with pytest.raises(RuntimeError):   # ToolInputError subclasses RuntimeError
+        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+                        start_time=0, duration=2, time_unit="s", y_range=100, y_unit="uV",
+                        pipeline=[{"tool": "no_such_tool"}])

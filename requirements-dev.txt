@@ -17,3 +17,7 @@ matplotlib
 # EDF reader for edf_processed_timeseries. pyedflib reads EDF slices and
 # lives on the EFS layer in production.
 pyedflib
+
+# ts_dsp DSP tools: scipy provides the Butterworth filter (highpass_filter).
+# Also on the EFS layer in production.
+scipy
