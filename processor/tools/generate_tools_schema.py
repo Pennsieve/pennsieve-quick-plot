@@ -1,7 +1,7 @@
 """
-Emit every tool-registry family's catalog as JSON — one file per registry —
+Emit every tool-registry family's schema as JSON — one file per registry —
 for pennsieve-mcp to embed (see also templates/generate_template_schema.py,
-which emits the template catalog that references these families via its
+which emits the template schema that references these families via its
 `pipeline_tools` field).
 
 A "registry" is any subpackage of `processor.tools` that exposes a
@@ -52,7 +52,7 @@ def _basename_for(family: str) -> str:
     return f"{short}_tools.json"
 
 
-def build_catalog(family: str, mod: "object") -> dict:
+def build_schema(family: str, mod: "object") -> dict:
     """Return {"family": ..., "tools": [ {name, description, requires,
     produces, params}, ... ]} for one registry."""
     tools = []
@@ -75,10 +75,10 @@ def build_catalog(family: str, mod: "object") -> dict:
     return {"family": family, "tools": tools}
 
 
-def build_catalogs() -> dict[str, dict]:
-    """{output basename -> catalog} for every discovered registry."""
+def build_schemas() -> dict[str, dict]:
+    """{output basename -> schema} for every discovered registry."""
     return {
-        _basename_for(family): build_catalog(family, mod)
+        _basename_for(family): build_schema(family, mod)
         for family, mod in sorted(_discover_registries().items())
     }
 
@@ -90,15 +90,15 @@ def main() -> None:
                              "DIR instead of printing a combined map to stdout")
     ns = parser.parse_args()
 
-    catalogs = build_catalogs()
+    schemas = build_schemas()
     if ns.out:
-        for basename, catalog in catalogs.items():
+        for basename, schema in schemas.items():
             path = os.path.join(ns.out, basename)
             with open(path, "w", encoding="utf-8") as fh:
-                fh.write(json.dumps(catalog, indent=2) + "\n")
+                fh.write(json.dumps(schema, indent=2) + "\n")
             print(f"wrote {path}")
     else:
-        print(json.dumps(catalogs, indent=2))
+        print(json.dumps(schemas, indent=2))
 
 
 if __name__ == "__main__":

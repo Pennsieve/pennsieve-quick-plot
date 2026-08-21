@@ -9,7 +9,7 @@ declare (all optional; a plain summary-only template omits the rest):
                             phrasings — that text is what routes requests).
     ARGS_SPEC:              tuple[TemplateArg, ...] — the render() kwargs the
                             caller must/can supply via `template_args`.
-                            The generated catalog (and therefore the MCP tool
+                            The generated schema (and therefore the MCP tool
                             description) is built from this, so it is the
                             single source of truth for a template's inputs.
     EXAMPLE_ARGS: dict      a valid `template_args` example, shown verbatim

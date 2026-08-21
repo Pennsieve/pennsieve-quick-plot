@@ -92,7 +92,7 @@ from processor.tools.ts_dsp import (
 NAME = "edf_processed_timeseries"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".edf",)
 
-# Declarative contract — the generated catalog (templates.json) and therefore
+# Declarative contract — the generated schema (templates.json) and therefore
 # the MCP plot_file tool description are built from these. Keep them in sync
 # with render()'s keyword arguments and the INPUTS section of the module
 # docstring above.

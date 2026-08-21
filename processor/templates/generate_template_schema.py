@@ -1,5 +1,5 @@
 """
-Emit the template catalog as JSON — the single source of truth the
+Emit the template schema as JSON — the single source of truth the
 pennsieve-mcp `plot_file` tool consumes to build its `template` enum and
 the `template`/`template_args` description text (so the two repos can't
 drift on template names, arguments, or file-type coverage).
@@ -12,7 +12,7 @@ derived (any required arg), not declared, so it can't lie.
 
 `pipeline_tools` names the tool-registry family (e.g. "ts_dsp") whose
 tools the template accepts in its `pipeline` arg; the matching family
-catalog is emitted by `processor.tools.generate_tools_schema`.
+schema is emitted by `processor.tools.generate_tools_schema`.
 
 Usage:
   python -m processor.templates.generate_template_schema              # stdout
@@ -35,7 +35,7 @@ from processor import templates
 OUTPUT_BASENAME = "templates.json"
 
 
-def build_catalog() -> dict:
+def build_schema() -> dict:
     """Return {"templates": [ {name, extensions, summary, needs_args, ...} ]}."""
     entries = []
     for name in templates.known_names():
@@ -69,7 +69,7 @@ def main() -> None:
                         help=f"write {OUTPUT_BASENAME} into DIR instead of stdout")
     ns = parser.parse_args()
 
-    doc = json.dumps(build_catalog(), indent=2) + "\n"
+    doc = json.dumps(build_schema(), indent=2) + "\n"
     if ns.out:
         path = os.path.join(ns.out, OUTPUT_BASENAME)
         with open(path, "w", encoding="utf-8") as fh:

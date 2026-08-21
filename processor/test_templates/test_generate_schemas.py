@@ -1,5 +1,5 @@
 """
-Tests for the generated catalogs (templates.json / <family>_tools.json)
+Tests for the generated schemas (templates.json / <family>_tools.json)
 that pennsieve-mcp embeds — see generate_template_schema.py and
 processor/tools/generate_tools_schema.py.
 
@@ -14,19 +14,19 @@ from __future__ import annotations
 import inspect
 
 from processor import templates
-from processor.templates.generate_template_schema import build_catalog as build_template_catalog
-from processor.tools.generate_tools_schema import build_catalogs as build_tool_catalogs
+from processor.templates.generate_template_schema import build_schema as build_template_schema
+from processor.tools.generate_tools_schema import build_schemas as build_tool_schemas
 
 
 ############# templates.json ##################
 
-def test_every_registered_template_is_in_catalog():
-    names = [t["name"] for t in build_template_catalog()["templates"]]
+def test_every_registered_template_is_in_schema():
+    names = [t["name"] for t in build_template_schema()["templates"]]
     assert names == templates.known_names()
 
 
 def test_entry_shape_and_needs_args_derivation():
-    by_name = {t["name"]: t for t in build_template_catalog()["templates"]}
+    by_name = {t["name"]: t for t in build_template_schema()["templates"]}
 
     edf = by_name["edf_processed_timeseries"]
     assert edf["needs_args"] is True
@@ -44,15 +44,15 @@ def test_entry_shape_and_needs_args_derivation():
 
 
 def test_every_template_has_a_summary():
-    for t in build_template_catalog()["templates"]:
+    for t in build_template_schema()["templates"]:
         assert t["summary"].strip(), f"{t['name']} has an empty SUMMARY"
 
 
 def test_args_spec_matches_render_signature():
     """Every declared arg (and `pipeline`, when a tool family is declared)
-    must be an actual keyword parameter of render() — the catalog may not
+    must be an actual keyword parameter of render() — the schema may not
     advertise arguments the code doesn't accept."""
-    for entry in build_template_catalog()["templates"]:
+    for entry in build_template_schema()["templates"]:
         mod = templates.get(entry["name"])
         render_params = set(inspect.signature(mod.render).parameters)
         declared = {a["name"] for a in entry["args"]}
@@ -70,10 +70,10 @@ def test_args_spec_matches_render_signature():
 
 ############# <family>_tools.json ##################
 
-def test_tool_catalogs_one_file_per_registry():
-    catalogs = build_tool_catalogs()
-    assert "ts_tools.json" in catalogs
-    ts = catalogs["ts_tools.json"]
+def test_tool_schemas_one_file_per_registry():
+    schemas = build_tool_schemas()
+    assert "ts_tools.json" in schemas
+    ts = schemas["ts_tools.json"]
     assert ts["family"] == "ts_dsp"
     names = [t["name"] for t in ts["tools"]]
     assert "highpass_filter" in names and "energy" in names
@@ -81,9 +81,9 @@ def test_tool_catalogs_one_file_per_registry():
 
 def test_pipeline_tools_references_resolve():
     """The family join key every template declares must exist among the
-    emitted tool catalogs (the cross-file invariant the Go side panics on)."""
-    families = {c["family"] for c in build_tool_catalogs().values()}
-    for t in build_template_catalog()["templates"]:
+    emitted tool schemas (the cross-file invariant the Go side panics on)."""
+    families = {c["family"] for c in build_tool_schemas().values()}
+    for t in build_template_schema()["templates"]:
         if t["pipeline_tools"] is not None:
             assert t["pipeline_tools"] in families, (
                 f"{t['name']} references unknown tool family {t['pipeline_tools']!r}"

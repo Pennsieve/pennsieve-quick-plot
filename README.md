@@ -44,8 +44,21 @@ processor/
   requirements.txt  # awslambdaric, pennsieve-llm, boto3 (heavy deps live on the EFS layer)
   templates/        # canned per-format render functions (no LLM)
     __init__.py     # registry — { NAME → module }
+    contract.py     # declarative half of the template contract (TemplateArg / ARGS_SPEC / …)
+    generate_template_schema.py   # emits schema/templates.json (see Generated schemas)
     csv_column_distributions.py
+    edf_processed_timeseries.py
     fcs_channel_histograms.py
+    fcs_compensation_heatmap.py
+    fcs_fsc_ssc_scatter.py
+    fcs_time_diagnostics.py
+    tsv_sessions_lineplot.py
+  tools/            # DSP tool registries templates accept via their `pipeline` arg
+    generate_tools_schema.py      # emits schema/<family>_tools.json per registry
+    ts_dsp/         # time-series family: filters, feature extraction, EDF io
+schema/             # generated schemas (`make schemas`) — pennsieve-mcp vendors copies
+  templates.json
+  ts_tools.json
 workflows/
   plot-templates.json                # main workflow (single-stage; Lambda; the v0.6+ product)
   quick-plot.json                    # legacy agent-only workflow (kept for backwards compat)
@@ -55,7 +68,7 @@ entrypoint.sh       # Runtime detection (Lambda vs ECS)
 Dockerfile          # Slim python 3.12 image with Lambda RIC + MPLCONFIGDIR=/tmp/matplotlib
 docker-compose.yml  # Local dev runner
 dev.env             # Local env vars
-Makefile            # make build / run / clean
+Makefile            # make build / run / clean / schemas
 data/
   input/            # Sample input files for local testing
   output/           # Output dir (gitignored except .gitkeep)
@@ -65,7 +78,7 @@ data/
 
 A "canned template" is a per-format Python function that renders a summary plot deterministically — no LLM in the loop. The MCP `plot_file` tool dispatches to one when its caller sets `template: <name>`; failures fall through to the agent loop automatically.
 
-Adding one is three small steps. Total work: ~50 lines of Python + one MCP enum entry.
+Adding one is three small steps. Total work: ~50 lines of Python + a schema regeneration — no MCP code changes.
 
 ### 1. Write the template
 
@@ -76,11 +89,25 @@ Drop a new module in `processor/templates/`. The contract:
 """
 your_template_name — one-line summary, when to use, output shape.
 """
+from processor.templates.contract import TemplateArg
 
 NAME = "your_template_name"               # the identifier the MCP enum advertises
 SUPPORTED_EXTENSIONS = (".ext1", ".ext2") # advisory; warned-not-blocked at runtime
+SUMMARY = "What it plots + example user phrasings (this text routes requests)."
 
-def render(target_file_path: str, output_path: str) -> None:
+# Declarative contract — only for parameterised templates; a summary-only
+# template stops at SUMMARY. The generated schema (templates.json), and
+# therefore the MCP tool description, is built from these, so ARGS_SPEC
+# must mirror render()'s keyword arguments (a test enforces this).
+ARGS_SPEC = (
+    TemplateArg("channel", "string", required=False,
+                description="Channel to plot; defaults to the first."),
+)
+EXAMPLE_ARGS = {"channel": "EEG Fpz-Cz"}
+ARGS_NOTES = ""        # cross-arg rules, e.g. "exactly one of end_time/duration"
+PIPELINE_TOOLS = None  # or a tool-family name like "ts_dsp" to accept a `pipeline` arg
+
+def render(target_file_path: str, output_path: str, *, channel: str | None = None) -> None:
     # ALL heavy imports inside render() — see "Lazy imports" below.
     import matplotlib
     matplotlib.use("Agg")
@@ -109,14 +136,16 @@ _REGISTRY = {
 }
 ```
 
-### 3. Surface the name to the MCP tool
+### 3. Regenerate the schemas and vendor them into pennsieve-mcp
 
-In [`pennsieve-mcp/internal/tools/plot_file.go`](https://github.com/Pennsieve/pennsieve-mcp/blob/main/internal/tools/plot_file.go):
+The MCP `plot_file` tool hardcodes nothing about templates — it embeds the generated JSON schemas (`//go:embed schemas/*.json` in [`plot_file_schema.go`](https://github.com/Pennsieve/pennsieve-mcp/blob/main/internal/tools/plot_file_schema.go)) and derives its `template` enum, argument docs, and pipeline-tool docs from them:
 
-- Add `"your_template_name"` to the `knownTemplates` slice (this populates the JSON-schema enum the model sees).
-- Add a one-line description in the `template` argument's `description` so the model knows when to pick it.
+```sh
+make schemas                                              # regenerate schema/*.json from the registries
+cp schema/*.json ../pennsieve-mcp/internal/tools/schemas/ # manual vendoring step (by design)
+```
 
-Ship a `pennsieve-mcp` PR alongside the `pennsieve-quick-plot` PR, bump `QuickPlotProcessorVersion` to the next tag.
+Ship a `pennsieve-mcp` PR with the updated JSONs alongside this repo's PR. After tagging the quick-plot release, bump the processor `tag` in each org's registered workflow definition — that's where the version is pinned; no MCP code change.
 
 ### Lazy imports — strictly required
 
@@ -130,11 +159,18 @@ Prefer narrow import paths when a package has a heavy `__init__`. For example, `
 
 If you're adding a dep that isn't already on the EFS layer, also append it to [`workflows/populate-quick-plot-stack.json`](workflows/populate-quick-plot-stack.json)'s `REQUIREMENTS` field and re-run that workflow once per compute node. Test cold-start time after — if `import yourdep` takes more than 2–3 seconds on the layer-mounted EFS, look for a lighter alternative.
 
+## Generated schemas (`schema/`)
+
+`schema/templates.json` and `schema/ts_tools.json` are generated snapshots of the template/tool contracts — the single source of truth is the code in `processor/templates/` and `processor/tools/`. Regenerate them with `make schemas` whenever a template's contract fields (`SUMMARY`, `ARGS_SPEC`, …) or a tool registry change.
+
+pennsieve-mcp vendors copies at `internal/tools/schemas/` (embedded into the Go binary at compile time) to build the `plot_file` tool's template enum and description text. The copy step is manual by design — update both repos in the same PR pair so they can't drift. Tests in `processor/test_templates/test_generate_schemas.py` pin the JSON shape and check every declared arg is a real `render()` keyword.
+
 ## Workflow definitions
 
 The workflow definitions consumed by `workflow-service` live in `workflows/`:
 
-- **`quick-plot.json`** — the main workflow this repo's processor implements. Lambda + viewer-asset data-target.
+- **`plot-templates.json`** — the main workflow (v0.6+). Single stage; Lambda; canned-template-first with agent fallback; viewer-asset data-target.
+- **`quick-plot.json`** — the legacy agent-only workflow (kept for backwards compat).
 - **`populate-quick-plot-stack.json`** — one-time layer-population workflow. Uses `processor-build-python-layer` (a separate repo) + `persistent-layer` data-target to install the scientific Python stack into the `quick-plot-stack` EFS layer.
 
 Workflow definition registration is API-only in workflow-service today — the JSONs are POSTed to `/definitions` at deploy time. See [`workflows/README.md`](workflows/README.md) for details and open questions.
@@ -144,7 +180,8 @@ Workflow definition registration is API-only in workflow-service today — the J
 ```sh
 make build    # build the Docker image
 make run      # run via docker-compose (ECS mode), reads dev.env
-make clean    # remove output files
+make schemas  # regenerate schema/*.json from the template/tool registries
+make clean    # remove output files and generated schema/*.json
 ```
 
 For local LLM calls, set `LLM_GOVERNOR_URL` in `dev.env` to a real Function URL and configure AWS creds with `bedrock:InvokeModel` access via the governor. Otherwise the processor will exit with a clear error — there is no offline LLM fallback by design.
