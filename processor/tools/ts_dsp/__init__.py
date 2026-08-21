@@ -14,6 +14,7 @@ Layout:
   io.py                 raw acquisition: probe_edf / read_edf / read_signal
                         (read + crop + unit-convert -> raw Signal; not tools)
   bandpass.py           frequency-selective filters (e.g. highpass_filter)
+  smoothing.py          domain-agnostic smoothers (e.g. moving_average)
   feature_extraction.py time-domain features (e.g. energy)
   registry.py           the tool registry + apply_dsp_pipeline driver
 
@@ -54,6 +55,7 @@ from .io import probe_edf, read_edf, read_signal  # noqa: F401
 # Import the DSP tool modules so their @dsp_tool decorators register.
 from . import bandpass as _bandpass  # noqa: F401
 from . import feature_extraction as _feature_extraction  # noqa: F401
+from . import smoothing as _smoothing  # noqa: F401
 
 __all__ = [
     "Signal",
