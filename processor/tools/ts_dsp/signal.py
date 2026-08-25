@@ -27,7 +27,11 @@ X_DOMAINS: tuple[str, ...] = ("time", "frequency")
 # "magnitude" is a spectrum's per-frequency strength (e.g. fft output). Keeping
 # them distinct lets templates tell "still the raw trace" from "same unit but
 # transformed" (e.g. the y_range guard), and requires-gates match exactly.
-Y_DOMAINS: tuple[str, ...] = ("amplitude", "magnitude", "power", "energy")
+Y_DOMAINS: tuple[str, ...] = (
+    "amplitude", "magnitude", "power", "energy",
+    # windowed time-domain features (see feature_extraction.py)
+    "rms", "zcr", "line_length", "kurtosis", "skewness",
+)
 
 
 ############# UNIT TABLES ##################

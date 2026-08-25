@@ -16,6 +16,11 @@ Because each tool declares `requires` / `produces`, an illegal ordering
 signal) is rejected automatically — there is no need to enumerate forbidden
 combinations.
 
+`produces` is a delta: list an axis/domain only if the applied tool changes
+it; otherwise pass the original axis/domain through untouched (so a tool
+that changes nothing declares `produces={}`, mirroring how the tools
+themselves use dataclasses.replace to set only the fields they change).
+
 This module imports only the standard library. Tools read a Signal's fields
 by attribute and return a modified copy via dataclasses.replace, so nothing
 here needs to import the Signal class — which keeps the dependency one-way

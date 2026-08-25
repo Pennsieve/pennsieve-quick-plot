@@ -63,15 +63,15 @@ def fft(signal):
     fs = float(signal.fs)
 
     spec = np.abs(rfft(y)) # rfft decompose the signal into its frequency components and returns one complex number each freq bin
-    # One-sided amplitude scaling: divide by the sample count, and double
-    # every bin that has a mirrored negative-frequency twin (all but DC,
-    # and but Nyquist when the length is even).
-    spec /= y.size
-    spec[1:] *= 2.0
+    # to convert the complex numbers to magnitudes:
+    spec /= y.size  
+    spec[1:] *= 2.0 
     if y.size % 2 == 0:
         spec[-1] /= 2.0
+
     # rfftfreq returns the frequencies-axis labels that correspondes to the FFT bins, in Hz.
-    return _spectrum(signal, rfftfreq(y.size, d=1.0 / fs), spec,
+    freqs = rfftfreq(y.size, d=1.0 / fs)
+    return _spectrum(signal, freqs, spec,
                      y_domain="magnitude", y_unit=signal.y_unit)
 
 
@@ -92,8 +92,7 @@ def fft(signal):
         "Power spectral density (Welch's method): how the signal's power "
         "distributes across frequency, separating sustained features from "
         "noise. Useful for characterising brain states, locating seizure-onset "
-        "zones, and tracking high-frequency oscillations. Best for ongoing / "
-        "stationary activity; for transient finite-energy events use `esd`."
+        "zones, and tracking high-frequency oscillations."
     ),
 )
 def psd(signal, win_size=None):
@@ -102,45 +101,19 @@ def psd(signal, win_size=None):
     y = _time_series(signal, "psd")
     fs = float(signal.fs)
     if win_size is None:
-        w = min(y.size, max(2, int(round(fs))))  # 1-s segments by default
+        nperseg = min(y.size, max(2, int(round(fs))))  # 1-s segments by default
     else:
-        w = int(round(float(win_size) * fs))
-        if w < 2:
+        nperseg = int(round(float(win_size) * fs))
+        if nperseg < 2:
             raise ToolInputError(
-                f"psd win_size ({win_size}s ≈ {w} samples) is too short; it "
-                f"must cover at least 2 samples."
+                f"psd win_size ({win_size}s ≈ {nperseg} samples) is too short; "
+                f"it must cover at least 2 samples."
             )
-        if w > y.size:
+        if nperseg > y.size:
             raise ToolInputError(
-                f"psd win_size ({win_size}s ≈ {w} samples) exceeds the "
+                f"psd win_size ({win_size}s ≈ {nperseg} samples) exceeds the "
                 f"{y.size}-sample signal."
             )
-    freqs, pxx = welch(y, fs=fs, nperseg=w)
+    freqs, pxx = welch(y, fs=fs, nperseg=nperseg)
     return _spectrum(signal, freqs, pxx,
                      y_domain="power", y_unit=f"{signal.y_unit}²/Hz")
-
-
-@dsp_tool(
-    "esd",
-    requires={"x_domain": "time",        # spectra are computed from a time-domain trace
-              "y_domain": "amplitude"},  # whose fs-derived frequency axis is truthful
-    produces={"x_domain": "frequency",   # x becomes frequency (Hz)
-              "y_domain": "energy"},     # y becomes energy per Hz
-    params=(),
-    description=(
-        "Energy spectral density (periodogram scaled by the clip duration): "
-        "how the signal's total energy distributes across frequency. Best for "
-        "transient, finite-energy events (a spike, a burst) analysed over the "
-        "whole clip; for ongoing / stationary activity use `psd`."
-    ),
-)
-def esd(signal):
-    from scipy.signal import periodogram
-
-    y = _time_series(signal, "esd")
-    fs = float(signal.fs)
-    freqs, pxx = periodogram(y, fs=fs)
-    # periodogram returns power/Hz; energy/Hz = power/Hz × clip duration.
-    duration = y.size / fs
-    return _spectrum(signal, freqs, pxx * duration,
-                     y_domain="energy", y_unit=f"{signal.y_unit}²·s/Hz")
