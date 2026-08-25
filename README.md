@@ -55,7 +55,8 @@ processor/
     tsv_sessions_lineplot.py
   tools/            # DSP tool registries templates accept via their `pipeline` arg
     generate_tools_schema.py      # emits schema/<family>_tools.json per registry
-    ts_dsp/         # time-series family: filters, feature extraction, EDF io
+    ts_dsp/         # time-series family (17 tools): filters, smoothers, spectral
+                    # transforms, windowed features, EDF io — see "DSP pipeline tools"
 schema/             # generated schemas (`make schemas`) — pennsieve-mcp vendors copies
   templates.json
   ts_tools.json
@@ -158,6 +159,33 @@ The rule:
 Prefer narrow import paths when a package has a heavy `__init__`. For example, `import flowkit` triggers eager imports of bokeh / gates / Session (~30s cold-start on EFS); `import flowio` (the lightweight parser flowkit wraps) imports in <1s. The v0.6.2 perf gain came from honoring this rule.
 
 If you're adding a dep that isn't already on the EFS layer, also append it to [`workflows/populate-quick-plot-stack.json`](workflows/populate-quick-plot-stack.json)'s `REQUIREMENTS` field and re-run that workflow once per compute node. Test cold-start time after — if `import yourdep` takes more than 2–3 seconds on the layer-mounted EFS, look for a lighter alternative.
+
+## DSP pipeline tools (`processor/tools/ts_dsp/`)
+
+A template that declares `PIPELINE_TOOLS = "ts_dsp"` (today: `edf_processed_timeseries`) accepts an optional `pipeline` argument — an ordered list of `{tool, params}` steps run on the Signal between reading and plotting:
+
+```json
+[{"tool": "notch_filter", "params": {"w0": 60}},
+ {"tool": "psd",          "params": {"win_size": 2}}]
+```
+
+Every tool is a `Signal -> Signal` function registered via the `@dsp_tool` decorator ([`ts_dsp/registry.py`](processor/tools/ts_dsp/registry.py)), declaring its parameters plus two domain dicts that form a small type system over the Signal's axis metadata:
+
+- **`requires`** — axis domains the input must have. Checked against the running Signal *before* each step executes, so an illegal order (`psd` after `energy`, `fft` after `fft`) fails with a specific `ToolInputError` instead of plotting a wrong-axis figure.
+- **`produces`** — a **delta**: lists only the axes the tool *changes*; omitted axes pass through untouched (mirroring how tools use `dataclasses.replace`). A tool that changes nothing declares `produces={}`.
+
+Tool families by module:
+
+| module | tools | domains |
+|---|---|---|
+| [`bandpass.py`](processor/tools/ts_dsp/bandpass.py) | `highpass_filter`, `lowpass_filter`, `bandpass_filter`, `notch_filter` | time/amplitude → unchanged |
+| [`smoothing.py`](processor/tools/ts_dsp/smoothing.py) | `moving_average`, `moving_median`, `savgol_filter`, `gaussian_filter1d` | any → unchanged |
+| [`frequency.py`](processor/tools/ts_dsp/frequency.py) | `fft`, `psd` | time/amplitude → frequency spectrum |
+| [`feature_extraction.py`](processor/tools/ts_dsp/feature_extraction.py) | `energy`, `power`, `rms`, `zcr`, `line_length`, `kurtosis`, `skewness` | time/amplitude → windowed feature series |
+
+The gating rule behind the `requires` column: **any tool whose math converts seconds or Hz via the Signal's `fs` requires `y_domain: "amplitude"`** — the raw trace is the only domain where `fs` is guaranteed truthful (windowed features resample the series without updating `fs`). Pure sample-arithmetic tools (the smoothers) require nothing and run on traces, feature series, and spectra alike. Follow the same rule when adding a tool.
+
+Adding a tool: write the function in the matching module (or a new one, imported in `ts_dsp/__init__.py` so its registrations run), decorate it with `@dsp_tool`, keep heavy imports inside the function (same lazy-import rule as templates), then regenerate + vendor the schemas (step 3 above) so the MCP `plot_file` docs advertise it.
 
 ## Generated schemas (`schema/`)
 
