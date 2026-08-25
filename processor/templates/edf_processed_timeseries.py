@@ -24,10 +24,11 @@ Required:
                           plain number; not needed when the times are given
                           as "HH:MM:SS" clock strings (which carry their own
                           unit). A nonsensical unit raises.
-  y_range                 y-axis extent, two accepted forms:
+  y_range                 OPTIONAL y-axis extent, two accepted forms:
                             * a single positive number N  -> [-N, +N]
                               (the "± shorthand").
                             * an explicit [min, max] pair -> used exactly.
+                          Omitted -> the y-axis auto-scales to the data.
                           Applied only while the y-axis stays voltage; if a
                           DSP step changes the y-domain (e.g. energy), the
                           y-axis is auto-scaled instead.
@@ -122,9 +123,10 @@ ARGS_SPEC: tuple[TemplateArg, ...] = (
                             "s, min, h). REQUIRED whenever any of those is a plain "
                             "number; omit only when all times are \"HH:MM:SS\" "
                             "clock strings"),
-    TemplateArg("y_range", "positive number or [min, max] pair",
+    TemplateArg("y_range", "positive number or [min, max] pair", required=False,
                 description="y-axis extent: a single positive number N for a "
-                            "symmetric [-N, +N], or an explicit [min, max] pair"),
+                            "symmetric [-N, +N], or an explicit [min, max] pair; "
+                            "omit to auto-scale the y-axis to the data"),
     TemplateArg("y_unit", "string",
                 description="voltage unit for the y-axis / y_range (V, mV, uV, nV)"),
 )
@@ -133,9 +135,10 @@ EXAMPLE_ARGS = {
     "time_unit": "s", "y_range": 200, "y_unit": "uV",
 }
 ARGS_NOTES = (
-    "There are NO silent defaults: a missing channel, time, unit, or y_range "
-    "makes the canned render fail (it then falls back to the agent). The "
-    "window may not exceed 600 s."
+    "There are NO silent defaults: a missing channel, time, or unit makes the "
+    "canned render fail (it then falls back to the agent). y_range is the "
+    "exception: omitting it auto-scales the y-axis. The window may not "
+    "exceed 600 s."
 )
 # `pipeline` (optional render() kwarg) accepts ordered steps drawn from this
 # tool-registry family; the MCP side renders the family's tool list from the
@@ -219,13 +222,15 @@ def _time_input_to_seconds(value: "object", unit_factor: float, recording_start_
         raise RuntimeError(f"{field} {value!r} is not a number.") from exc
 
 
-def _parse_y_range(y_range: "object") -> tuple[float, float]:
-    """Return (ymin, ymax) from the ± shorthand or an explicit pair."""
+def _parse_y_range(y_range: "object") -> "tuple[float, float] | None":
+    """Return (ymin, ymax) from the ± shorthand or an explicit pair.
+
+    y_range is optional: None (or blank) means auto-scale the y-axis to the
+    data, so a pipeline whose output range is unknowable up front (e.g. a
+    spectrum) doesn't force the user to invent a voltage range.
+    """
     if y_range is None or (isinstance(y_range, str) and y_range.strip() == ""):
-        raise RuntimeError(
-            "A y-axis range is required — give either a single positive number "
-            "N for a symmetric ±N range, or an explicit [min, max] pair."
-        )
+        return None
     # Single number -> symmetric ± range.
     if isinstance(y_range, (int, float)) and not isinstance(y_range, bool):
         n = float(y_range)

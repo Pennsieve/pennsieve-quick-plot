@@ -38,7 +38,8 @@ def _zero_phase_filter(signal, sos, tool_name, order):
 
 @dsp_tool(
     "highpass_filter",
-    requires={"x_domain": "time"},       # cannot high-pass a frequency-domain signal
+    requires={"x_domain": "time",        # cannot high-pass a frequency-domain signal
+              "y_domain": "amplitude"},  # fs-based cutoffs are only truthful for the raw trace
     produces={},                         # stays a time-domain trace, same unit
     params=(
         ParamSpec("cutoff", required=True, description="high-pass cutoff frequency", unit="Hz"),
@@ -65,7 +66,8 @@ def highpass_filter(signal, cutoff, order=4):
 
 @dsp_tool(
     "lowpass_filter",
-    requires={"x_domain": "time"},       # cannot low-pass a frequency-domain signal
+    requires={"x_domain": "time",        # cannot low-pass a frequency-domain signal
+              "y_domain": "amplitude"},  # fs-based cutoffs are only truthful for the raw trace
     produces={},                         # stays a time-domain trace, same unit
     params=(
         ParamSpec("cutoff", required=True, description="low-pass cutoff frequency", unit="Hz"),
@@ -92,7 +94,8 @@ def lowpass_filter(signal, cutoff, order=4):
 
 @dsp_tool(
     "bandpass_filter",
-    requires={"x_domain": "time"},       # cannot band-pass a frequency-domain signal
+    requires={"x_domain": "time",        # cannot band-pass a frequency-domain signal
+              "y_domain": "amplitude"},  # fs-based cutoffs are only truthful for the raw trace
     produces={},                         # stays a time-domain trace, same unit
     params=(
         ParamSpec("low_cutoff", required=True, description="lower band edge", unit="Hz"),
@@ -126,7 +129,8 @@ def bandpass_filter(signal, low_cutoff, high_cutoff, order=4):
 
 @dsp_tool(
     "notch_filter",
-    requires={"x_domain": "time"},       # cannot notch a frequency-domain signal
+    requires={"x_domain": "time",        # cannot notch a frequency-domain signal
+              "y_domain": "amplitude"},  # fs-based cutoffs are only truthful for the raw trace
     produces={},                         # stays a time-domain trace, same unit
     params=(
         ParamSpec("w0", required=False,

@@ -33,7 +33,7 @@ def test_entry_shape_and_needs_args_derivation():
     assert edf["pipeline_tools"] == "ts_dsp"
     assert edf["extensions"] == [".edf"]
     required = [a["name"] for a in edf["args"] if a["required"]]
-    assert required == ["channel", "start_time", "y_range", "y_unit"]
+    assert required == ["channel", "start_time", "y_unit"]
     assert set(edf["example_args"]) >= set(required)
 
     csv = by_name["csv_column_distributions"]

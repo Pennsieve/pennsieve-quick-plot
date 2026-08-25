@@ -23,7 +23,11 @@ from dataclasses import dataclass
 # reader that sets x_domain="time" and a tool that requires x_domain="time"
 # are guaranteed to match. Extend these as new transforms are added.
 X_DOMAINS: tuple[str, ...] = ("time", "frequency")
-Y_DOMAINS: tuple[str, ...] = ("amplitude", "voltage", "power", "energy")
+# "amplitude" is the raw trace (the only y_domain the reader produces);
+# "magnitude" is a spectrum's per-frequency strength (e.g. fft output). Keeping
+# them distinct lets templates tell "still the raw trace" from "same unit but
+# transformed" (e.g. the y_range guard), and requires-gates match exactly.
+Y_DOMAINS: tuple[str, ...] = ("amplitude", "magnitude", "power", "energy")
 
 
 ############# UNIT TABLES ##################
