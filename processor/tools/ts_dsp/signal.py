@@ -91,7 +91,9 @@ class Signal:
         return f"{self.x_domain} ({self.x_unit})"
 
     def y_label(self) -> str:
-        return f"{self.y_domain} ({self.y_unit})"
+        # Dimensionless quantities (e.g. kurtosis, skewness) have y_unit "";
+        # skip the unit parens rather than rendering "kurtosis ()".
+        return f"{self.y_domain} ({self.y_unit})" if self.y_unit else self.y_domain
 
 
 ############# UNIT RESOLUTION ##################
