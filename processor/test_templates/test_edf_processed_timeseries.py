@@ -214,15 +214,12 @@ def test_render_raises_on_bad_y_unit(tmp_path):
                         y_range=100, y_unit="amperes")
 
 
-# 5. y_range is optional: omitting it auto-scales instead of raising
-def test_render_auto_scales_when_y_range_missing(tmp_path):
+# 5. missing y_range
+def test_render_raises_when_y_range_missing(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
-    out = tmp_path / "figure.png"
-
-    template.render(src, str(out), channel="F7",
-                    start_time=0, duration=2, time_unit="s", y_unit="uV")
-
-    assert out.read_bytes().startswith(b"\x89PNG")
+    with pytest.raises(RuntimeError):
+        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+                        start_time=0, duration=2, time_unit="s", y_unit="uV")
 
 
 # 6. an explicit y-range whose min is not below its max

@@ -67,9 +67,9 @@
         {
           "name": "y_range",
           "type": "positive number or [min, max] pair",
-          "required": false,
+          "required": true,
           "unit": "",
-          "description": "y-axis extent: a single positive number N for a symmetric [-N, +N], or an explicit [min, max] pair; omit to auto-scale the y-axis to the data"
+          "description": "y-axis extent: a single positive number N for a symmetric [-N, +N], or an explicit [min, max] pair"
         },
         {
           "name": "y_unit",
@@ -87,7 +87,7 @@
         "y_range": 200,
         "y_unit": "uV"
       },
-      "notes": "There are NO silent defaults: a missing channel, time, or unit makes the canned render fail (it then falls back to the agent). y_range is the exception: omitting it auto-scales the y-axis. The window may not exceed 600 s."
+      "notes": "There are NO silent defaults: a missing channel, time, unit, or y_range makes the canned render fail (it then falls back to the agent). The window may not exceed 600 s."
     },
     {
       "name": "fcs_channel_histograms",
