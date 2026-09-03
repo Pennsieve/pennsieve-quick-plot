@@ -32,13 +32,15 @@ def _edf_index(labels: list[str], channel: str) -> int:
 
 ############# PROBE (metadata only) ##################
 def probe_edf(path: str):
-    """(labels, fs_of(channel), duration_s_of(channel), start_clock_s | None).
+    """(labels, fs_of(channel), duration_s_of(channel), unit_of(channel),
+    start_clock_s | None).
 
-    Cheap metadata pass: no sample data is read. `fs_of` / `duration_of`
-    resolve the channel name (case-insensitive) and raise — listing the
-    available channels — if it is absent. `start_clock_s` is the recording's
-    start-of-day in seconds-since-midnight, or None if the file has no usable
-    start timestamp.
+    Cheap metadata pass: no sample data is read. `fs_of` / `duration_of` /
+    `unit_of` resolve the channel name (case-insensitive) and raise — listing
+    the available channels — if it is absent. `unit_of` is the channel's
+    declared physical dimension, verbatim (may be blank). `start_clock_s` is
+    the recording's start-of-day in seconds-since-midnight, or None if the
+    file has no usable start timestamp.
     """
     import pyedflib
 
@@ -53,6 +55,9 @@ def probe_edf(path: str):
             idx = _edf_index(labels, channel)
             return reader.getNSamples()[idx] / float(reader.getSampleFrequency(idx))
 
+        def unit_of(channel: str) -> str:
+            return str(reader.getPhysicalDimension(_edf_index(labels, channel)))
+
         start_clock_s = None
         try:
             # so start_clock_s is None if the file has no start timestamp, 
@@ -62,7 +67,7 @@ def probe_edf(path: str):
         except Exception:  # noqa: BLE001 — a missing/parse-broken start date is non-fatal
             start_clock_s = None
 
-        return labels, fs_of, duration_of, start_clock_s
+        return labels, fs_of, duration_of, unit_of, start_clock_s
     finally:
         reader._close()
 
@@ -93,7 +98,15 @@ def read_edf(path: str, channel: str, start_s: float, end_s: float,
             # pyedflib returns physical values already scaled to the signal's
             # declared physical dimension (e.g. 'uV'); convert that to volts.
             y_phys = reader.readSignal(idx, start=start_sample, n=n)
-            unit_factor, _ = resolve_volt_unit(reader.getPhysicalDimension(idx), required=False)
+            dim = reader.getPhysicalDimension(idx)
+            try:
+                unit_factor, _ = resolve_volt_unit(dim, required=False)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"Channel {ch!r} declares its voltage unit as {dim!r}, "
+                    "which is not a recognized voltage unit, so the recording "
+                    "cannot be read reliably."
+                ) from exc
             return fs, start_sample, np.asarray(y_phys, dtype=float) * unit_factor
 
         fs, start_sample, y_volts = read_volts(channel)

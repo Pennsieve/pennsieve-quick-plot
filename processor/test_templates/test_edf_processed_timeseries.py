@@ -179,13 +179,41 @@ def test_render_raises_when_end_and_duration_disagree(tmp_path):
                         y_range=100, y_unit="uV")
 
 
-# TEST FOR UNIT HANDLING (no silent defaults)
-# 1. missing y_unit
-def test_render_raises_when_y_unit_missing(tmp_path):
-    src = _write_edf(tmp_path / "rec.edf")
-    with pytest.raises(RuntimeError):
+# TEST FOR UNIT HANDLING
+# 1. y_unit is optional: omitted -> display in the unit the file declares
+def test_render_defaults_y_unit_to_file_header(monkeypatch, tmp_path):
+    src = _write_edf(tmp_path / "rec.edf")   # header dimension is "uV"
+    ylabels = []
+    original = matplotlib.axes.Axes.set_ylabel
+
+    def spy(self, ylabel, *a, **k):
+        ylabels.append(ylabel)
+        return original(self, ylabel, *a, **k)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_ylabel", spy)
+    out = tmp_path / "figure.png"
+    template.render(src, str(out), channel="F7",
+                    start_time=0, duration=2, time_unit="s", y_range=100)
+
+    assert out.read_bytes().startswith(b"\x89PNG")
+    assert ylabels[-1] == "amplitude (µV)"   # canonical symbol for header "uV"
+
+
+# 1b. a header that declares a non-voltage unit fails the render when y_unit
+#     is omitted (there is no truthful display unit to fall back to)
+def test_render_raises_on_unrecognized_header_unit(tmp_path):
+    src = _write_edf(tmp_path / "rec.edf", dimension="degC")
+    with pytest.raises(RuntimeError, match="not a recognized voltage unit"):
         template.render(src, str(tmp_path / "figure.png"), channel="F7",
                         start_time=0, duration=2, time_unit="s", y_range=100)
+
+
+# 1c. ...and even an explicit y_unit cannot rescue it: the read itself needs
+#     the header unit to convert samples, so it fails with the same message
+def test_render_raises_on_unrecognized_header_unit_despite_y_unit(tmp_path):
+    src = _write_edf(tmp_path / "rec.edf", dimension="degC")
+    with pytest.raises(RuntimeError, match="not a recognized voltage unit"):
+        template.render(src, str(tmp_path / "figure.png"), channel="F7", **_OK)
 
 
 # 2. missing time_unit when a numeric time is given
@@ -214,12 +242,33 @@ def test_render_raises_on_bad_y_unit(tmp_path):
                         y_range=100, y_unit="amperes")
 
 
-# 5. missing y_range
-def test_render_raises_when_y_range_missing(tmp_path):
+# 5. y_range is optional: omitting it auto-scales instead of raising
+def test_render_auto_scales_when_y_range_missing(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
-    with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
-                        start_time=0, duration=2, time_unit="s", y_unit="uV")
+    out = tmp_path / "figure.png"
+
+    template.render(src, str(out), channel="F7",
+                    start_time=0, duration=2, time_unit="s", y_unit="uV")
+
+    assert out.read_bytes().startswith(b"\x89PNG")
+
+
+# 5b. a y_range given without y_unit is interpreted in the header's unit
+def test_render_y_range_without_y_unit_uses_header_unit(monkeypatch, tmp_path):
+    src = _write_edf(tmp_path / "rec.edf")   # header dimension is "uV"
+    ylim_calls = []
+    original_set_ylim = matplotlib.axes.Axes.set_ylim
+
+    def spy_set_ylim(self, *args, **kwargs):
+        flat = tuple(args[0]) if len(args) == 1 and np.iterable(args[0]) else args
+        ylim_calls.append(flat)
+        return original_set_ylim(self, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_ylim", spy_set_ylim)
+    template.render(src, str(tmp_path / "figure.png"), channel="F7",
+                    start_time=0, duration=2, time_unit="s", y_range=100)
+
+    assert (-100.0, 100.0) in ylim_calls     # ±100 in the header's µV
 
 
 # 6. an explicit y-range whose min is not below its max
@@ -409,3 +458,77 @@ def test_render_pipeline_unknown_tool_raises(tmp_path):
         template.render(src, str(tmp_path / "figure.png"), channel="F7",
                         start_time=0, duration=2, time_unit="s", y_range=100, y_unit="uV",
                         pipeline=[{"tool": "no_such_tool"}])
+
+
+# TEST FOR SPECTRUM PIPELINES (fft/psd move the x-axis off the time domain)
+# 1. a psd pipeline relabels BOTH axes: x to frequency (Hz), y to power/Hz
+def test_render_pipeline_psd_labels_both_axes(monkeypatch, tmp_path):
+    src = _write_edf(tmp_path / "rec.edf")
+    labels = {}
+    original_set_xlabel = matplotlib.axes.Axes.set_xlabel
+    original_set_ylabel = matplotlib.axes.Axes.set_ylabel
+
+    def spy_set_xlabel(self, xlabel, *a, **k):
+        labels["x"] = xlabel
+        return original_set_xlabel(self, xlabel, *a, **k)
+
+    def spy_set_ylabel(self, ylabel, *a, **k):
+        labels["y"] = ylabel
+        return original_set_ylabel(self, ylabel, *a, **k)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_xlabel", spy_set_xlabel)
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_ylabel", spy_set_ylabel)
+
+    template.render(src, str(tmp_path / "figure.png"), channel="F7",
+                    start_time=0, duration=5, time_unit="s", y_range=200, y_unit="uV",
+                    pipeline=[{"tool": "psd", "params": {}}])
+
+    assert labels["x"] == "frequency (Hz)"
+    assert labels["y"] == "power (µV²/Hz)"
+
+
+# 2. a spectrum auto-scales the y-axis: the voltage y_range must NOT be applied
+#    (it is still required by the contract, but power/Hz is not voltage).
+def test_render_pipeline_psd_does_not_apply_y_range(monkeypatch, tmp_path):
+    src = _write_edf(tmp_path / "rec.edf")
+    ylim_calls = []
+    original_set_ylim = matplotlib.axes.Axes.set_ylim
+
+    def spy_set_ylim(self, *args, **kwargs):
+        # set_ylim may be called as set_ylim((lo, hi)) or set_ylim(lo, hi);
+        # record every call as a flat (lo, hi) tuple.
+        flat = tuple(args[0]) if len(args) == 1 and np.iterable(args[0]) else args
+        ylim_calls.append(flat)
+        return original_set_ylim(self, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_ylim", spy_set_ylim)
+
+    # Positive control: a raw trace DOES clamp y to the requested ±100 µV.
+    template.render(src, str(tmp_path / "raw.png"), channel="F7", **_OK)
+    assert (-100.0, 100.0) in ylim_calls
+
+    # A psd pipeline must not receive that voltage range.
+    ylim_calls.clear()
+    template.render(src, str(tmp_path / "psd.png"), channel="F7",
+                    start_time=0, duration=5, time_unit="s", y_range=100, y_unit="uV",
+                    pipeline=[{"tool": "psd", "params": {}}])
+    assert (-100.0, 100.0) not in ylim_calls
+
+
+# 3. an fft pipeline also renders: x becomes frequency, y magnitude in µV
+def test_render_pipeline_fft_writes_a_png_with_magnitude_axis(monkeypatch, tmp_path):
+    src = _write_edf(tmp_path / "rec.edf")
+    ylabels = []
+    original = matplotlib.axes.Axes.set_ylabel
+
+    def spy(self, ylabel, *a, **k):
+        ylabels.append(ylabel)
+        return original(self, ylabel, *a, **k)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_ylabel", spy)
+    out = tmp_path / "figure.png"
+    template.render(src, str(out), channel="F7",
+                    start_time=0, duration=5, time_unit="s", y_range=200, y_unit="uV",
+                    pipeline=[{"tool": "fft", "params": {}}])
+    assert out.read_bytes().startswith(b"\x89PNG")
+    assert ylabels[-1] == "magnitude (µV)"

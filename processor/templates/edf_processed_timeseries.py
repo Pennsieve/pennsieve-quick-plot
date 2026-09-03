@@ -24,15 +24,20 @@ Required:
                           plain number; not needed when the times are given
                           as "HH:MM:SS" clock strings (which carry their own
                           unit). A nonsensical unit raises.
-  y_range                 y-axis extent, two accepted forms:
+  y_range                 OPTIONAL y-axis extent, two accepted forms:
                             * a single positive number N  -> [-N, +N]
                               (the "± shorthand").
                             * an explicit [min, max] pair -> used exactly.
+                          Omitted -> the y-axis auto-scales to the data
+                          (recommended to set it for raw voltage traces).
                           Applied only while the y-axis stays voltage; if a
-                          DSP step changes the y-domain (e.g. energy), the
-                          y-axis is auto-scaled instead.
-  y_unit                  voltage unit the y-axis (and y_range) are in
-                          (V/mV/uV/nV). A nonsensical unit raises.
+                          DSP step changes the y-domain (e.g. energy, psd),
+                          the y-axis is auto-scaled instead.
+  y_unit                  OPTIONAL voltage unit the y-axis (and y_range) are
+                          displayed in (V/mV/uV/nV). Omitted -> the unit the
+                          file itself declares for the channel (a blank
+                          declaration falls back to µV). A nonsensical unit
+                          raises.
 
 Montage (optional):
   channel2                a second channel name. When given, the trace is the
@@ -48,9 +53,12 @@ Processing (optional):
                           domain compatibility) and then run in order via
                           ts_dsp.apply_dsp_pipeline. Absent -> a raw trace.
 
-NOTE on units. We do not default units; a missing unit raises (looking ahead
-to processing stages whose domains — frequency, power, energy — have no one
-sensible default). A supplied unit must be dimensionally valid or we raise.
+NOTE on units. time_unit is never defaulted: a numeric time without one
+raises. y_unit is display-only (the samples' true unit comes from the file
+header), so omitting it falls back to the header's own declared unit — the
+most truthful display choice. A supplied unit must be dimensionally valid or
+we raise, and a header that declares an unrecognizable voltage unit fails
+the read outright.
 
 NOTE on the x-axis display. The x-axis mirrors the FORMAT the user typed:
 clock-string inputs ("14:07:00") render as H:M:S wall-clock ticks; numeric
@@ -64,7 +72,8 @@ falls back to the agent loop; see processor/main.py::try_canned_template)
 File:      not an EDF, unreadable, or channel not present.
 Required:  channel / start / (end|duration) missing; both end & duration
            given but inconsistent.
-Units:     time_unit not a time unit; y_unit not a voltage unit.
+Units:     time_unit not a time unit; y_unit not a voltage unit; the file
+           header declares an unrecognizable voltage unit.
 Window:    start past the end of the recording; computed end past the end
            of the recording; start after end; computed duration > 600 s;
            window so short it yields fewer than MIN_SAMPLES samples.
@@ -122,20 +131,30 @@ ARGS_SPEC: tuple[TemplateArg, ...] = (
                             "s, min, h). REQUIRED whenever any of those is a plain "
                             "number; omit only when all times are \"HH:MM:SS\" "
                             "clock strings"),
-    TemplateArg("y_range", "positive number or [min, max] pair",
+    TemplateArg("y_range", "positive number or [min, max] pair", required=False,
                 description="y-axis extent: a single positive number N for a "
-                            "symmetric [-N, +N], or an explicit [min, max] pair"),
-    TemplateArg("y_unit", "string",
-                description="voltage unit for the y-axis / y_range (V, mV, uV, nV)"),
+                            "symmetric [-N, +N], or an explicit [min, max] pair; "
+                            "omit to auto-scale the y-axis to the data. "
+                            "Recommended for raw voltage traces (EEG is "
+                            "conventionally read at a fixed scale); ignored when "
+                            "the pipeline moves the y-axis off voltage (e.g. "
+                            "fft, psd, energy)"),
+    TemplateArg("y_unit", "string", required=False,
+                description="voltage unit the y-axis / y_range are displayed in "
+                            "(V, mV, uV, nV); omit to use the unit the file "
+                            "itself declares for the channel"),
 )
 EXAMPLE_ARGS = {
     "channel": "F8", "start_time": 10, "duration": 5,
     "time_unit": "s", "y_range": 200, "y_unit": "uV",
 }
 ARGS_NOTES = (
-    "There are NO silent defaults: a missing channel, time, unit, or y_range "
-    "makes the canned render fail (it then falls back to the agent). The "
-    "window may not exceed 600 s."
+    "There are NO silent defaults for the data selection: a missing channel, "
+    "time, or time_unit (for numeric times) makes the canned render fail (it "
+    "then falls back to the agent). y_range and y_unit are display settings "
+    "with truthful defaults: omitted y_range auto-scales the y-axis, and "
+    "omitted y_unit displays in the unit the file itself declares. The window "
+    "may not exceed 600 s."
 )
 # `pipeline` (optional render() kwarg) accepts ordered steps drawn from this
 # tool-registry family; the MCP side renders the family's tool list from the
@@ -219,13 +238,15 @@ def _time_input_to_seconds(value: "object", unit_factor: float, recording_start_
         raise RuntimeError(f"{field} {value!r} is not a number.") from exc
 
 
-def _parse_y_range(y_range: "object") -> "tuple[float, float]":
-    """Return (ymin, ymax) from the ± shorthand or an explicit pair."""
+def _parse_y_range(y_range: "object") -> "tuple[float, float] | None":
+    """Return (ymin, ymax) from the ± shorthand or an explicit pair.
+
+    y_range is optional: None (or blank) means auto-scale the y-axis to the
+    data, so a pipeline whose output range is unknowable up front (e.g. a
+    spectrum) doesn't force the user to invent a voltage range.
+    """
     if y_range is None or (isinstance(y_range, str) and y_range.strip() == ""):
-        raise RuntimeError(
-            "A y-axis range is required: a single positive number N for a "
-            "symmetric [-N, +N], or a [min, max] pair."
-        )
+        return None
     # Single number -> symmetric ± range.
     if isinstance(y_range, (int, float)) and not isinstance(y_range, bool):
         n = float(y_range)
@@ -419,7 +440,7 @@ def render(
     if start_time is None or (isinstance(start_time, str) and start_time.strip() == ""):
         raise RuntimeError("A start time is required.")
 
-    ####### 3. VALIDATE X AND Y UNITS + PARSE Y-AXIS RANGE
+    ####### 3. VALIDATE TIME UNIT + PARSE Y-AXIS RANGE
     # The x-axis mirrors the user's input format: clock-string times render as
     # H:M:S; numeric times render in their own unit. `clock_mode` keys off the
     # start time (what anchors the window).
@@ -428,12 +449,11 @@ def render(
     # clock strings ("HH:MM:SS") carry their own unit and don't need one.
     has_numeric_time = any(_is_numeric_time(v) for v in (start_time, end_time, duration))
     time_factor, time_symbol = resolve_time_unit(time_unit, required=has_numeric_time)
-    volt_factor, volt_symbol = resolve_volt_unit(y_unit, required=True)
     y_limits = _parse_y_range(y_range)
 
     ####### 4. VALIDATE FS, DURATION FOR EACH REQUESTED CHANNEL
     try:
-        _channels, fs_of, duration_of, start_clock_s = probe_edf(target_file_path)
+        _channels, fs_of, duration_of, unit_of, start_clock_s = probe_edf(target_file_path)
     except RuntimeError:
         raise
     except Exception as exc:  # noqa: BLE001 — any reader failure = unreadable file
@@ -457,6 +477,23 @@ def render(
     fs = rates[str(channel)]
     # The window must fit within BOTH channels -> validate against the shorter.
     channel_duration_s = min(durations.values())
+
+    # Display unit: an explicit y_unit wins; omitted -> the unit the file
+    # itself declares for the (primary) channel. A blank declaration falls
+    # back to µV inside resolve_volt_unit; an unrecognizable one raises here
+    # (the read itself would fail on it anyway).
+    if y_unit is not None and str(y_unit).strip() != "":
+        volt_factor, volt_symbol = resolve_volt_unit(y_unit, required=True)
+    else:
+        header_unit = unit_of(str(channel))
+        try:
+            volt_factor, volt_symbol = resolve_volt_unit(header_unit, required=False)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"Channel {channel!r} declares its voltage unit as "
+                f"{header_unit!r}, which is not a recognized voltage unit, so "
+                "the recording cannot be read reliably."
+            ) from exc
 
     ####### 5. VALIDATE THE X RANGE (seconds from recording start)
     start_s = _time_input_to_seconds(start_time, time_factor, start_clock_s, field="start time")

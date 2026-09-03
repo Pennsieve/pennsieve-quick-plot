@@ -67,16 +67,16 @@
         {
           "name": "y_range",
           "type": "positive number or [min, max] pair",
-          "required": true,
+          "required": false,
           "unit": "",
-          "description": "y-axis extent: a single positive number N for a symmetric [-N, +N], or an explicit [min, max] pair"
+          "description": "y-axis extent: a single positive number N for a symmetric [-N, +N], or an explicit [min, max] pair; omit to auto-scale the y-axis to the data. Recommended for raw voltage traces (EEG is conventionally read at a fixed scale); ignored when the pipeline moves the y-axis off voltage (e.g. fft, psd, energy)"
         },
         {
           "name": "y_unit",
           "type": "string",
-          "required": true,
+          "required": false,
           "unit": "",
-          "description": "voltage unit for the y-axis / y_range (V, mV, uV, nV)"
+          "description": "voltage unit the y-axis / y_range are displayed in (V, mV, uV, nV); omit to use the unit the file itself declares for the channel"
         }
       ],
       "example_args": {
@@ -87,7 +87,7 @@
         "y_range": 200,
         "y_unit": "uV"
       },
-      "notes": "There are NO silent defaults: a missing channel, time, unit, or y_range makes the canned render fail (it then falls back to the agent). The window may not exceed 600 s."
+      "notes": "There are NO silent defaults for the data selection: a missing channel, time, or time_unit (for numeric times) makes the canned render fail (it then falls back to the agent). y_range and y_unit are display settings with truthful defaults: omitted y_range auto-scales the y-axis, and omitted y_unit displays in the unit the file itself declares. The window may not exceed 600 s."
     },
     {
       "name": "fcs_channel_histograms",
