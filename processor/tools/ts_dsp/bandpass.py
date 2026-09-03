@@ -54,6 +54,10 @@ def highpass_filter(signal, cutoff, order=4):
     cutoff = float(cutoff)
     order = int(order)
     nyq = fs / 2.0
+    if order < 1:
+        raise ToolInputError(
+            f"highpass_filter order {order} must be a positive integer."
+        )
     if not (0.0 < cutoff < nyq):
         raise ToolInputError(
             f"highpass_filter cutoff {cutoff} Hz must be between 0 and the "
@@ -82,6 +86,10 @@ def lowpass_filter(signal, cutoff, order=4):
     cutoff = float(cutoff)
     order = int(order)
     nyq = fs / 2.0
+    if order < 1:
+        raise ToolInputError(
+            f"lowpass_filter order {order} must be a positive integer."
+        )
     if not (0.0 < cutoff < nyq):
         raise ToolInputError(
             f"lowpass_filter cutoff {cutoff} Hz must be between 0 and the "
@@ -115,6 +123,10 @@ def bandpass_filter(signal, low_cutoff, high_cutoff, order=4):
     high_cutoff = float(high_cutoff)
     order = int(order)
     nyq = fs / 2.0
+    if order < 1:
+        raise ToolInputError(
+            f"bandpass_filter order {order} must be a positive integer."
+        )
     if not (0.0 < low_cutoff < high_cutoff < nyq):
         raise ToolInputError(
             f"bandpass_filter band [{low_cutoff}, {high_cutoff}] Hz must satisfy "

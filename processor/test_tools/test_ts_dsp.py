@@ -95,6 +95,101 @@ def test_highpass_too_few_samples_raises():
                            [{"tool": "highpass_filter", "params": {"cutoff": 10}}])
 
 
+# LOWPASS_FILTER
+def test_lowpass_attenuates_high_tone():
+    fs = 256.0
+    t = np.arange(int(2 * fs)) / fs
+    low = np.sin(2 * np.pi * 5.0 * t)
+    high = np.sin(2 * np.pi * 80.0 * t)
+    out = apply_dsp_pipeline(_ts(low + high, fs=fs),
+                             [{"tool": "lowpass_filter", "params": {"cutoff": 30, "order": 4}}])
+    # 80 Hz tone removed, 5 Hz tone passes: output ≈ the low tone alone.
+    assert np.sqrt(np.mean((out.y - low) ** 2)) < 0.1
+    assert out.y.size == t.size
+    assert out.x_domain == "time" and out.y_domain == "amplitude"
+
+
+# BANDPASS_FILTER
+def test_bandpass_keeps_inband_kills_outband():
+    fs = 256.0
+    t = np.arange(int(2 * fs)) / fs
+    inband = np.sin(2 * np.pi * 20.0 * t)
+    below = np.sin(2 * np.pi * 2.0 * t)
+    above = np.sin(2 * np.pi * 100.0 * t)
+    out = apply_dsp_pipeline(
+        _ts(inband + below + above, fs=fs),
+        [{"tool": "bandpass_filter",
+          "params": {"low_cutoff": 10, "high_cutoff": 40, "order": 4}}])
+    # 2 Hz and 100 Hz tones removed, 20 Hz tone passes ≈ unchanged.
+    assert np.sqrt(np.mean((out.y - inband) ** 2)) < 0.15
+    assert out.x_domain == "time" and out.y_domain == "amplitude"
+
+
+@pytest.mark.parametrize("low,high", [
+    (-5, 40),    # negative lower edge
+    (0, 40),     # zero lower edge
+    (40, 40),    # empty band
+    (50, 40),    # inverted band
+    (10, 128),   # upper edge at Nyquist (fs=256)
+    (10, 200),   # upper edge above Nyquist
+])
+def test_bandpass_invalid_band_raises(low, high):
+    with pytest.raises(ToolInputError):
+        apply_dsp_pipeline(_ts(np.ones(512), fs=256.0),
+                           [{"tool": "bandpass_filter",
+                             "params": {"low_cutoff": low, "high_cutoff": high}}])
+
+
+# NOTCH_FILTER
+def _tone_amplitude(y, t, f):
+    """Amplitude of the `f` Hz component of `y` by complex projection."""
+    return 2.0 * abs(np.mean(y * np.exp(-2j * np.pi * f * t)))
+
+
+def test_notch_kills_60hz_keeps_rest():
+    fs = 512.0
+    t = np.arange(int(2 * fs)) / fs
+    y = np.sin(2 * np.pi * 10.0 * t) + np.sin(2 * np.pi * 60.0 * t)
+    out = apply_dsp_pipeline(_ts(y, fs=fs), [{"tool": "notch_filter", "params": {}}])
+    assert _tone_amplitude(out.y, t, 60.0) < 0.1    # mains tone removed (default w0=60)
+    assert abs(_tone_amplitude(out.y, t, 10.0) - 1.0) < 0.05   # signal tone intact
+    assert out.x_domain == "time" and out.y_domain == "amplitude"
+
+
+@pytest.mark.parametrize("w0", [-60, 0, 128, 200])  # Nyquist = 128 for fs=256
+def test_notch_w0_out_of_range_raises(w0):
+    with pytest.raises(ToolInputError):
+        apply_dsp_pipeline(_ts(np.ones(512), fs=256.0),
+                           [{"tool": "notch_filter", "params": {"w0": w0}}])
+
+
+# SHARED FILTER PARAM VALIDATION
+@pytest.mark.parametrize("tool", ["highpass_filter", "lowpass_filter"])
+@pytest.mark.parametrize("cutoff", [-10, 0, 128, 200])  # Nyquist = 128 for fs=256
+def test_out_of_range_cutoff_raises(tool, cutoff):
+    with pytest.raises(ToolInputError):
+        apply_dsp_pipeline(_ts(np.ones(512), fs=256.0),
+                           [{"tool": tool, "params": {"cutoff": cutoff}}])
+
+
+@pytest.mark.parametrize("step", [
+    {"tool": "highpass_filter", "params": {"cutoff": 10, "order": 0}},
+    {"tool": "highpass_filter", "params": {"cutoff": 10, "order": -3}},
+    {"tool": "lowpass_filter", "params": {"cutoff": 10, "order": 0}},
+    {"tool": "bandpass_filter", "params": {"low_cutoff": 5, "high_cutoff": 40, "order": 0}},
+])
+def test_nonpositive_order_raises(step):
+    with pytest.raises(ToolInputError):
+        apply_dsp_pipeline(_ts(np.ones(512), fs=256.0), [step])
+
+
+def test_order_one_is_accepted():
+    # Lower bound is inclusive: order 1 is a valid Butterworth filter.
+    out = apply_dsp_pipeline(_ts(np.ones(512), fs=256.0),
+                             [{"tool": "lowpass_filter", "params": {"cutoff": 30, "order": 1}}])
+    assert out.y.size == 512
+
+
 # ENERGY
 def test_energy_windows_and_updates_domain():
     fs = 256.0
