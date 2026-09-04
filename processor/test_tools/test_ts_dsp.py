@@ -5,7 +5,7 @@ need no EDF file and run fast.
 
 Layout (one banner section per source module / concern):
   1. REGISTRY / PIPELINE DRIVER  — plumbing shared by every tool
-  2. FREQUENCY-SELECTIVE FILTERS — bandpass.py (highpass/lowpass/bandpass/notch)
+  2. FREQUENCY-SELECTIVE FILTERS — filters.py (highpass/lowpass/bandpass/notch)
   3. SMOOTHERS                   — smoothing.py (moving_average/median, savgol, gaussian)
   4. FREQUENCY TRANSFORMS        — frequency.py (fft, psd)
   5. FEATURES                    — feature_extraction.py (energy, power, rms,
@@ -116,7 +116,7 @@ def test_domain_mismatch_raises():
 
 
 # ---------------------------------------------------------------------------
-# 2. FREQUENCY-SELECTIVE FILTERS (tools/ts_dsp/bandpass.py)
+# 2. FREQUENCY-SELECTIVE FILTERS (tools/ts_dsp/filters.py)
 #    highpass_filter, lowpass_filter, bandpass_filter, notch_filter.
 #    Per tool: one numeric-correctness test on known sinusoids, then the
 #    invalid-parameter error paths. Shared cutoff/order validation is

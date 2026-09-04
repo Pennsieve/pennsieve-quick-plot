@@ -178,7 +178,7 @@ Tool families by module:
 
 | module | tools | domains |
 |---|---|---|
-| [`bandpass.py`](processor/tools/ts_dsp/bandpass.py) | `highpass_filter`, `lowpass_filter`, `bandpass_filter`, `notch_filter` | time/amplitude → unchanged |
+| [`filters.py`](processor/tools/ts_dsp/filters.py) | `highpass_filter`, `lowpass_filter`, `bandpass_filter`, `notch_filter` | time/amplitude → unchanged |
 | [`smoothing.py`](processor/tools/ts_dsp/smoothing.py) | `moving_average`, `moving_median`, `savgol_filter`, `gaussian_filter1d` | any → unchanged |
 | [`frequency.py`](processor/tools/ts_dsp/frequency.py) | `fft`, `psd` | time/amplitude → frequency spectrum |
 | [`feature_extraction.py`](processor/tools/ts_dsp/feature_extraction.py) | `energy`, `power`, `rms`, `zcr`, `line_length`, `kurtosis`, `skewness` | time/amplitude → windowed feature series |

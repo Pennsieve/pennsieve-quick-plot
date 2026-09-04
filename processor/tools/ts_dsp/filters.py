@@ -1,5 +1,5 @@
 """
-ts_dsp.bandpass — time-domain frequency-selective filters.
+ts_dsp.filters — time-domain frequency-selective filters.
 
 Each filter takes a time-domain signal and returns a time-domain signal
 (domains carried through unchanged), so filters chain freely among
