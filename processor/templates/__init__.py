@@ -29,7 +29,7 @@ expected behavior is to fall through to the agent loop. See main.py.
 from __future__ import annotations
 
 # Import each template module and register it. Keep this list short and
-# curated — every entry contributes to the catalog the MCP `plot_file`
+# curated — every entry contributes to the schema the MCP `plot_file`
 # tool advertises in its template-argument enum, so the model's choice
 # space stays narrow and predictable.
 from processor.templates import csv_column_distributions  # noqa: E402

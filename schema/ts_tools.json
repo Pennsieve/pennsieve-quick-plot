@@ -1,0 +1,367 @@
+{
+  "family": "ts_dsp",
+  "tools": [
+    {
+      "name": "bandpass_filter",
+      "description": "Zero-phase Butterworth band-pass filter; keeps content between `low_cutoff` and `high_cutoff` Hz.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {},
+      "params": [
+        {
+          "name": "low_cutoff",
+          "required": true,
+          "unit": "Hz",
+          "description": "lower band edge"
+        },
+        {
+          "name": "high_cutoff",
+          "required": true,
+          "unit": "Hz",
+          "description": "upper band edge"
+        },
+        {
+          "name": "order",
+          "required": false,
+          "unit": "",
+          "description": "Butterworth filter order (default 4)"
+        }
+      ]
+    },
+    {
+      "name": "energy",
+      "description": "Short-time energy: integral of squared amplitude over each sliding window.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {
+        "y_domain": "energy"
+      },
+      "params": [
+        {
+          "name": "window_size",
+          "required": true,
+          "unit": "s",
+          "description": "window length"
+        },
+        {
+          "name": "window_stride",
+          "required": true,
+          "unit": "s",
+          "description": "hop between successive windows"
+        }
+      ]
+    },
+    {
+      "name": "fft",
+      "description": "One-sided amplitude spectrum via the FFT: how strongly each frequency component is present, scaled so a pure sinusoid of amplitude A shows a peak of height A.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {
+        "x_domain": "frequency",
+        "y_domain": "magnitude"
+      },
+      "params": []
+    },
+    {
+      "name": "gaussian_filter1d",
+      "description": "Gaussian average: weighted moving average whose weights follow a Gaussian centred on each point, so nearby points count more than distant ones.",
+      "requires": {},
+      "produces": {},
+      "params": [
+        {
+          "name": "sigma",
+          "required": true,
+          "unit": "samples",
+          "description": "spread of the Gaussian weights; larger sigma = broader window and stronger smoothing"
+        }
+      ]
+    },
+    {
+      "name": "highpass_filter",
+      "description": "Zero-phase Butterworth high-pass filter; attenuates content below `cutoff` Hz.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {},
+      "params": [
+        {
+          "name": "cutoff",
+          "required": true,
+          "unit": "Hz",
+          "description": "high-pass cutoff frequency"
+        },
+        {
+          "name": "order",
+          "required": false,
+          "unit": "",
+          "description": "Butterworth filter order (default 4)"
+        }
+      ]
+    },
+    {
+      "name": "kurtosis",
+      "description": "Sliding-window kurtosis (Fisher, excess): tailedness of the amplitude distribution; large values flag spiky, outlier-heavy segments.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {
+        "y_domain": "kurtosis"
+      },
+      "params": [
+        {
+          "name": "window_size",
+          "required": true,
+          "unit": "s",
+          "description": "window length"
+        },
+        {
+          "name": "window_stride",
+          "required": true,
+          "unit": "s",
+          "description": "hop between successive windows"
+        }
+      ]
+    },
+    {
+      "name": "line_length",
+      "description": "Line length: sum of absolute sample-to-sample differences in each sliding window. Sensitive to both amplitude and frequency increases; a classic iEEG seizure-detection feature.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {
+        "y_domain": "line_length"
+      },
+      "params": [
+        {
+          "name": "window_size",
+          "required": true,
+          "unit": "s",
+          "description": "window length"
+        },
+        {
+          "name": "window_stride",
+          "required": true,
+          "unit": "s",
+          "description": "hop between successive windows"
+        }
+      ]
+    },
+    {
+      "name": "lowpass_filter",
+      "description": "Zero-phase Butterworth low-pass filter; attenuates content above `cutoff` Hz.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {},
+      "params": [
+        {
+          "name": "cutoff",
+          "required": true,
+          "unit": "Hz",
+          "description": "low-pass cutoff frequency"
+        },
+        {
+          "name": "order",
+          "required": false,
+          "unit": "",
+          "description": "Butterworth filter order (default 4)"
+        }
+      ]
+    },
+    {
+      "name": "moving_average",
+      "description": "Moving average: each point becomes the mean of the `win_size` points around it.",
+      "requires": {},
+      "produces": {},
+      "params": [
+        {
+          "name": "win_size",
+          "required": true,
+          "unit": "samples",
+          "description": "number of data points used to compute the average"
+        }
+      ]
+    },
+    {
+      "name": "moving_median",
+      "description": "Moving median: each point becomes the median of the `win_size` points around it; robust to outliers/spikes.",
+      "requires": {},
+      "produces": {},
+      "params": [
+        {
+          "name": "win_size",
+          "required": true,
+          "unit": "samples",
+          "description": "number of data points used to compute the median"
+        }
+      ]
+    },
+    {
+      "name": "notch_filter",
+      "description": "Zero-phase IIR notch filter; removes a narrow band centered at `w0` Hz (default 60 Hz mains interference).",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {},
+      "params": [
+        {
+          "name": "w0",
+          "required": false,
+          "unit": "Hz",
+          "description": "center frequency to notch out (default 60, US mains)"
+        }
+      ]
+    },
+    {
+      "name": "power",
+      "description": "Short-time power: mean squared amplitude over each sliding window.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {
+        "y_domain": "power"
+      },
+      "params": [
+        {
+          "name": "window_size",
+          "required": true,
+          "unit": "s",
+          "description": "window length"
+        },
+        {
+          "name": "window_stride",
+          "required": true,
+          "unit": "s",
+          "description": "hop between successive windows"
+        }
+      ]
+    },
+    {
+      "name": "psd",
+      "description": "Power spectral density (Welch's method): how the signal's power distributes across frequency, separating sustained features from noise. Useful for characterising brain states, locating seizure-onset zones, and tracking high-frequency oscillations.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {
+        "x_domain": "frequency",
+        "y_domain": "power"
+      },
+      "params": [
+        {
+          "name": "win_size",
+          "required": false,
+          "unit": "s",
+          "description": "Welch segment length; longer segments give finer frequency resolution, shorter ones smoother estimates (default 1 s, capped at the signal length)"
+        }
+      ]
+    },
+    {
+      "name": "rms",
+      "description": "Root-mean-square amplitude over each sliding window; an amplitude envelope in the signal's own unit.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {
+        "y_domain": "rms"
+      },
+      "params": [
+        {
+          "name": "window_size",
+          "required": true,
+          "unit": "s",
+          "description": "window length"
+        },
+        {
+          "name": "window_stride",
+          "required": true,
+          "unit": "s",
+          "description": "hop between successive windows"
+        }
+      ]
+    },
+    {
+      "name": "savgol_filter",
+      "description": "Savitzky-Golay filter: slides a symmetric `win_size` window along the series, fits a degree-`polyorder` polynomial in each window, and replaces the centre point with the polynomial's value.",
+      "requires": {},
+      "produces": {},
+      "params": [
+        {
+          "name": "win_size",
+          "required": true,
+          "unit": "samples",
+          "description": "window length; must be odd"
+        },
+        {
+          "name": "polyorder",
+          "required": true,
+          "unit": "",
+          "description": "polynomial degree fitted in each window; higher degrees follow more complex local curves"
+        }
+      ]
+    },
+    {
+      "name": "skewness",
+      "description": "Sliding-window skewness: asymmetry of the amplitude distribution around its mean (0 for symmetric signals).",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {
+        "y_domain": "skewness"
+      },
+      "params": [
+        {
+          "name": "window_size",
+          "required": true,
+          "unit": "s",
+          "description": "window length"
+        },
+        {
+          "name": "window_stride",
+          "required": true,
+          "unit": "s",
+          "description": "hop between successive windows"
+        }
+      ]
+    },
+    {
+      "name": "zcr",
+      "description": "Zero-crossing rate: sign changes per second within each sliding window; a cheap proxy for the dominant frequency of the trace.",
+      "requires": {
+        "x_domain": "time",
+        "y_domain": "amplitude"
+      },
+      "produces": {
+        "y_domain": "zcr"
+      },
+      "params": [
+        {
+          "name": "window_size",
+          "required": true,
+          "unit": "s",
+          "description": "window length"
+        },
+        {
+          "name": "window_stride",
+          "required": true,
+          "unit": "s",
+          "description": "hop between successive windows"
+        }
+      ]
+    }
+  ]
+}
