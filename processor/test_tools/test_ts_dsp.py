@@ -25,8 +25,11 @@ import pytest
 
 from processor.tools.ts_dsp import (
     Signal,
+    X_DOMAINS,
+    Y_DOMAINS,
     apply_dsp_pipeline,
     known_names,
+    specs,
     ToolInputError,
 )
 
@@ -54,6 +57,26 @@ def test_tools_are_registered():
     # Only opt-in DSP transforms register; raw acquisition (read_signal etc.)
     # is not a tool.
     assert set(known_names()) >= {"highpass_filter", "energy"}
+
+
+def test_tool_domains_are_in_the_vocabulary():
+    # The gating type-system works by exact string match against the
+    # X_DOMAINS / Y_DOMAINS vocabulary in signal.py. A typo in a tool's
+    # requires/produces (e.g. "magnitde") would otherwise register fine and
+    # just silently never match a gate.
+    for spec in specs():
+        for field, source in (("requires", spec.requires), ("produces", spec.produces)):
+            assert set(source) <= {"x_domain", "y_domain"}, (
+                f"{spec.name}.{field} has unknown axis key(s): {sorted(set(source) - {'x_domain', 'y_domain'})}"
+            )
+            if "x_domain" in source:
+                assert source["x_domain"] in X_DOMAINS, (
+                    f"{spec.name}.{field} x_domain {source['x_domain']!r} not in {X_DOMAINS}"
+                )
+            if "y_domain" in source:
+                assert source["y_domain"] in Y_DOMAINS, (
+                    f"{spec.name}.{field} y_domain {source['y_domain']!r} not in {Y_DOMAINS}"
+                )
 
 
 def test_empty_pipeline_returns_signal_unchanged():

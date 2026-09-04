@@ -30,4 +30,3 @@ run:
 
 clean:
 	rm -f data/output/*
-	rm -f $(SCHEMAS_DIR)/*.json
