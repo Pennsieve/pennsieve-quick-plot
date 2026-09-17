@@ -32,6 +32,10 @@ Same image runs as Lambda or ECS Fargate. The runtime is detected by `entrypoint
 
 The processor logic in `main.py` is identical in both modes.
 
+## How a request flows through the code
+
+In one sentence: the MCP `plot_file` tool turns the user's sentence into a template name plus `template_args`; `main.py` calls that template's `render()`; the template parses and validates the arguments, asks a reader (`processor/readers/`) to turn the file into a `Signal`, runs the optional DSP `pipeline` over it (`processor/tools/ts_dsp/`), and plots the result. [`processor/README.md`](processor/README.md) walks one concrete request through every function with a flowchart.
+
 ## Project layout
 
 ```
