@@ -409,12 +409,13 @@ def test_fft_of_constant_is_pure_dc():
     assert np.all(out.y[1:] < 1e-9)                    # no spurious content elsewhere
 
 
-def test_fft_resets_clock_ticks_to_numeric():
-    # "clock" tick style only makes sense on a seconds-since-midnight time
-    # axis; a spectrum must come back with numeric ticks.
-    sig = replace(_ts(np.ones(256)), x_tick_style="clock")
-    out = apply_dsp_pipeline(sig, [{"tool": "fft", "params": {}}])
-    assert out.x_tick_style == "numeric"
+def test_spectrum_keeps_recording_start_clock():
+    # A spectrum has no time axis to anchor, but the metadata about the
+    # source recording rides along untouched (dataclasses.replace semantics).
+    sig = replace(_ts(np.ones(256)), recording_start_clock_s=47556.0)
+    out = apply_dsp_pipeline(sig, [{"tool": "fft"}])
+    assert out.x_domain == "frequency"
+    assert out.recording_start_clock_s == 47556.0
 
 
 def test_fft_too_few_samples_raises():

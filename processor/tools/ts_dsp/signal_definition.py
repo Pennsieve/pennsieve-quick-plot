@@ -38,9 +38,12 @@ Y_DOMAINS: tuple[str, ...] = (
 class Signal:
     """A signal clip plus the axis metadata the plotter renders from.
 
-    `t` and `y` are already expressed in `x_unit` / `y_unit`. Processing
-    stages take a Signal and return a Signal (via dataclasses.replace),
-    updating the *_domain / *_unit fields as the physical meaning changes.
+    `t` and `y` are already expressed in `x_unit` / `y_unit`. A reader
+    always produces time in seconds from the start of the recording
+    (x_unit="s"); the plot stage converts to the user's display unit or to
+    wall-clock ticks. Processing stages take a Signal and return a Signal
+    (via dataclasses.replace), updating the *_domain / *_unit fields as the
+    physical meaning changes.
     """
 
     t: "object"          # np.ndarray of x values, in x_unit
@@ -54,10 +57,11 @@ class Signal:
     x_unit: str = "s"
     y_domain: str = "amplitude"
     y_unit: str = "µV"
-    # How the x tick LABELS are rendered (the axis data is always numeric):
-    #   "numeric" -> plain integers/decimals in x_unit, no 1e9-style offset.
-    #   "clock"   -> H:M:S wall clock; `t` then holds seconds-since-midnight.
-    x_tick_style: str = "numeric"
+    # Wall-clock time of the recording's first sample, as seconds since
+    # midnight, or None when the file carries no usable start timestamp.
+    # Filled by the reader; the plot stage uses it to draw H:M:S ticks when
+    # the user gave clock-string times.
+    recording_start_clock_s: "float | None" = None
 
     def x_label(self) -> str:
         return f"{self.x_domain} ({self.x_unit})"

@@ -1,7 +1,10 @@
 """
 Tests for the edf_processed_timeseries template.
 
-Layout (one banner section per stage of render()'s pipeline):
+Layout (one banner section per concern; render() is driven end to end, so
+these tests hold regardless of how the work is split between _parse /
+_validate, the reader and _plot):
+  0. PARSE / VALIDATE         — _parse and _validate on their own (no file)
   1. HAPPY PATHS              — valid inputs -> a PNG on disk
   2. FILE / FORMAT ERRORS     — wrong extension, missing file, unknown channel
   3. DATA-SELECTION INPUTS    — required channel/time args, missing or inconsistent
@@ -116,6 +119,69 @@ def _spy_ylim(monkeypatch) -> list:
 
     monkeypatch.setattr(matplotlib.axes.Axes, "set_ylim", spy)
     return calls
+
+
+# ---------------------------------------------------------------------------
+# 0. PARSE / VALIDATE
+#    The two user-input stages on their own. Neither opens a file, so these
+#    run with no EDF at all.
+# ---------------------------------------------------------------------------
+def _parse(**overrides):
+    kw = dict(channel="F7", channel2=None, start_time=0, end_time=None, duration=2,
+              time_unit="s", y_range=None, y_unit=None, pipeline=None)
+    kw.update(overrides)
+    return template._parse(**kw)
+
+
+def test_parse_numeric_times_become_seconds():
+    p = _parse(start_time=500, duration=50, time_unit="ms")
+    assert p.start == template.TimePoint(0.5, is_clock=False)
+    assert p.duration_s == pytest.approx(0.05)
+    assert (p.time_factor, p.time_symbol, p.clock_mode) == (1e-3, "ms", False)
+
+
+def test_parse_clock_times_become_seconds_since_midnight():
+    p = _parse(start_time="13:12:36", end_time="13:12:38", duration=None, time_unit=None)
+    assert p.start == template.TimePoint(13 * 3600 + 12 * 60 + 36, is_clock=True)
+    assert p.end.is_clock and p.clock_mode
+    assert p.time_factor == 1.0          # no numeric time -> no unit needed
+
+
+def test_parse_montage_flag_and_display_settings():
+    p = _parse(channel2="F8", y_range=100, y_unit="mV")
+    assert p.montage and p.channel2 == "F8"
+    assert p.y_limits == (-100.0, 100.0)
+    assert p.volt == (1e-3, "mV")
+    q = _parse(channel2="", y_range=[-5, 20])
+    assert not q.montage and q.y_limits == (-5.0, 20.0) and q.volt is None
+
+
+def test_parse_rejects_uninterpretable_values():
+    with pytest.raises(RuntimeError):          # numeric time without a unit
+        _parse(time_unit=None)
+    with pytest.raises(RuntimeError):          # not a time unit
+        _parse(time_unit="parsecs")
+    with pytest.raises(RuntimeError):          # not a voltage unit
+        _parse(y_unit="furlongs")
+    with pytest.raises(RuntimeError):          # malformed clock string
+        _parse(start_time="13:12", duration=None, time_unit=None)
+    with pytest.raises(RuntimeError):          # y_range shape
+        _parse(y_range=[1, 2, 3])
+
+
+def test_validate_requires_channel_start_and_a_window_end():
+    template._validate(_parse())               # the baseline is valid
+    with pytest.raises(RuntimeError, match="channel name is required"):
+        template._validate(_parse(channel=None))
+    with pytest.raises(RuntimeError, match="start time is required"):
+        template._validate(_parse(start_time=None))
+    with pytest.raises(RuntimeError, match="end time or a duration"):
+        template._validate(_parse(duration=None))
+
+
+def test_validate_rejects_montage_of_a_channel_with_itself():
+    with pytest.raises(RuntimeError, match="two different channels"):
+        template._validate(_parse(channel="F7", channel2="f7"))
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +477,7 @@ def test_render_montage_plots_the_difference(monkeypatch, tmp_path):
     original_plot = matplotlib.axes.Axes.plot
 
     def spy_plot(self, *args, **kwargs):
-        # _plot_timeseries calls ax.plot(t, y, ...); grab y.
+        # _plot calls ax.plot(x, y, ...); grab y.
         if len(args) >= 2:
             captured["y"] = np.asarray(args[1], dtype=float).copy()
         return original_plot(self, *args, **kwargs)

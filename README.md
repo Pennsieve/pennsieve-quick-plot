@@ -61,7 +61,9 @@ processor/
       units.py              # time/voltage unit tables, H:M:S helpers
       dsp_pipeline.py       # @dsp_tool contract + apply_dsp_pipeline runner
       filters.py, smoothing.py, frequency.py, feature_extraction.py   # the tools
-      io.py                 # EDF reading (moving to processor/readers/)
+  readers/          # file -> Signal; one module per format, chosen by extension
+    __init__.py     # load_signal(path, params) + the clip limits (MAX_DURATION_S, MIN_SAMPLES)
+    edf_to_signal.py          # EDF via pyedflib: header, request-vs-header checks, channels, Signal
 schema/             # generated schemas (`make schemas`) — pennsieve-mcp vendors copies
   templates.json
   ts_tools.json

@@ -32,13 +32,10 @@ def _time_series(signal, tool_name, min_samples=2):
 
 def _spectrum(signal, freqs, values, y_domain, y_unit):
     """Repackage a signal as a one-sided spectrum over `freqs` (Hz)."""
-    # x_tick_style resets to "numeric": "clock" only makes sense for a
-    # seconds-since-midnight time axis, never for a frequency axis.
     return replace(
         signal, t=freqs, y=values,
         x_domain="frequency", x_unit="Hz",
         y_domain=y_domain, y_unit=y_unit,
-        x_tick_style="numeric",
     )
 
 
