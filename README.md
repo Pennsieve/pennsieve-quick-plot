@@ -42,10 +42,10 @@ processor/
   llm.py            # Pennsieve LLM Governor wrapper (anthropic SDK + SigV4)
   executor.py       # subprocess that runs the agent's generated script with EFS layer on PYTHONPATH
   requirements.txt  # awslambdaric, pennsieve-llm, boto3 (heavy deps live on the EFS layer)
+  schema.py         # emits schema/templates.json + schema/ts_tools.json (`make schemas`)
   templates/        # canned per-format render functions (no LLM)
     __init__.py     # registry — { NAME → module }
     contract.py     # declarative half of the template contract (TemplateArg / ARGS_SPEC / …)
-    generate_template_schema.py   # emits schema/templates.json (see Generated schemas)
     csv_column_distributions.py
     edf_processed_timeseries.py
     fcs_channel_histograms.py
@@ -54,7 +54,6 @@ processor/
     fcs_time_diagnostics.py
     tsv_sessions_lineplot.py
   tools/            # DSP tool registries templates accept via their `pipeline` arg
-    generate_tools_schema.py      # emits schema/<family>_tools.json per registry
     ts_dsp/         # time-series family (17 tools) — see "DSP pipeline tools"
       __init__.py           # the tool registry: explicit ALL_TOOLS list + get()/known_names()
       signal_definition.py  # the Signal dataclass + X_DOMAINS / Y_DOMAINS vocabulary
@@ -196,7 +195,7 @@ Adding a tool: write the function in the matching module, decorate it with `@dsp
 
 ## Generated schemas (`schema/`)
 
-`schema/templates.json` and `schema/ts_tools.json` are generated snapshots of the template/tool contracts — the single source of truth is the code in `processor/templates/` and `processor/tools/`. Regenerate them with `make schemas` whenever a template's contract fields (`SUMMARY`, `ARGS_SPEC`, …) or a tool registry change.
+`schema/templates.json` and `schema/ts_tools.json` are generated snapshots of the template/tool contracts, emitted by one script, [`processor/schema.py`](processor/schema.py) — the single source of truth is the code in `processor/templates/` and `processor/tools/`. Regenerate them with `make schemas` whenever a template's contract fields (`SUMMARY`, `ARGS_SPEC`, …) or a tool registry change.
 
 pennsieve-mcp vendors copies at `internal/tools/schemas/` (embedded into the Go binary at compile time) to build the `plot_file` tool's template enum and description text. The copy step is manual by design — update both repos in the same PR pair so they can't drift. Tests in `processor/test_templates/test_generate_schemas.py` pin the JSON shape, check every declared arg is a real `render()` keyword, and assert the checked-in `schema/*.json` match a fresh regeneration — so a forgotten `make schemas` fails the test suite rather than shipping a stale schema.
 

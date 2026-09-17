@@ -20,7 +20,7 @@ declare (all optional; a plain summary-only template omits the rest):
                             whose registered DSP tools this template accepts
                             in its `pipeline` arg. Absent/None = no pipeline.
 
-`generate_template_schema.py` reads these into `templates.json`, which
+`processor/schema.py` reads these into `templates.json`, which
 pennsieve-mcp embeds — see that script's docstring for the regeneration
 workflow. Keep this module stdlib-only: every template imports it at
 module top, which happens at processor startup.

@@ -17,8 +17,7 @@ help:
 
 schemas:
 	mkdir -p $(SCHEMAS_DIR)
-	python3 -m processor.templates.generate_template_schema --out $(SCHEMAS_DIR)
-	python3 -m processor.tools.generate_tools_schema --out $(SCHEMAS_DIR)
+	python3 -m processor.schema --out $(SCHEMAS_DIR)
 
 build:
 	docker build -t $(SERVICE_NAME) .
