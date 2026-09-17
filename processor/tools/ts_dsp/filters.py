@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .registry import dsp_tool, ParamSpec, ToolInputError
+from .dsp_pipeline import dsp_tool, ParamSpec, ToolInputError
 
 
 def _zero_phase_filter(signal, sos, tool_name, order):

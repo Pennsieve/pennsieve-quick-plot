@@ -55,8 +55,13 @@ processor/
     tsv_sessions_lineplot.py
   tools/            # DSP tool registries templates accept via their `pipeline` arg
     generate_tools_schema.py      # emits schema/<family>_tools.json per registry
-    ts_dsp/         # time-series family (17 tools): filters, smoothers, spectral
-                    # transforms, windowed features, EDF io — see "DSP pipeline tools"
+    ts_dsp/         # time-series family (17 tools) — see "DSP pipeline tools"
+      __init__.py           # the tool registry: explicit ALL_TOOLS list + get()/known_names()
+      signal_definition.py  # the Signal dataclass + X_DOMAINS / Y_DOMAINS vocabulary
+      units.py              # time/voltage unit tables, H:M:S helpers
+      dsp_pipeline.py       # @dsp_tool contract + apply_dsp_pipeline runner
+      filters.py, smoothing.py, frequency.py, feature_extraction.py   # the tools
+      io.py                 # EDF reading (moving to processor/readers/)
 schema/             # generated schemas (`make schemas`) — pennsieve-mcp vendors copies
   templates.json
   ts_tools.json
@@ -169,7 +174,7 @@ A template that declares `PIPELINE_TOOLS = "ts_dsp"` (today: `edf_processed_time
  {"tool": "psd",          "params": {"win_size": 2}}]
 ```
 
-Every tool is a `Signal -> Signal` function registered via the `@dsp_tool` decorator ([`ts_dsp/registry.py`](processor/tools/ts_dsp/registry.py)), declaring its parameters plus two domain dicts that form a small type system over the Signal's axis metadata:
+Every tool is a `Signal -> Signal` function decorated with `@dsp_tool` ([`ts_dsp/dsp_pipeline.py`](processor/tools/ts_dsp/dsp_pipeline.py)), which attaches its parameters plus two domain dicts that form a small type system over the Signal's axis metadata. The decorator does not register anything: the registry is the explicit `ALL_TOOLS` list in [`ts_dsp/__init__.py`](processor/tools/ts_dsp/__init__.py), built the same way `templates/__init__.py` lists the templates.
 
 - **`requires`** — axis domains the input must have. Checked against the running Signal *before* each step executes, so an illegal order (`psd` after `energy`, `fft` after `fft`) fails with a specific `ToolInputError` instead of plotting a wrong-axis figure.
 - **`produces`** — a **delta**: lists only the axes the tool *changes*; omitted axes pass through untouched (mirroring how tools use `dataclasses.replace`). A tool that changes nothing declares `produces={}`.
@@ -185,7 +190,7 @@ Tool families by module:
 
 The gating rule behind the `requires` column: **any tool whose math converts seconds or Hz via the Signal's `fs` requires `y_domain: "amplitude"`** — the raw trace is the only domain where `fs` is guaranteed truthful (windowed features resample the series without updating `fs`). Pure sample-arithmetic tools (the smoothers) require nothing and run on traces, feature series, and spectra alike. Follow the same rule when adding a tool.
 
-Adding a tool: write the function in the matching module (or a new one, imported in `ts_dsp/__init__.py` so its registrations run), decorate it with `@dsp_tool`, keep heavy imports inside the function (same lazy-import rule as templates), then regenerate + vendor the schemas (step 3 above) so the MCP `plot_file` docs advertise it.
+Adding a tool: write the function in the matching module, decorate it with `@dsp_tool`, add it to `ALL_TOOLS` in `ts_dsp/__init__.py`, keep heavy imports inside the function (same lazy-import rule as templates), then regenerate + vendor the schemas (step 3 above) so the MCP `plot_file` docs advertise it.
 
 ## Generated schemas (`schema/`)
 

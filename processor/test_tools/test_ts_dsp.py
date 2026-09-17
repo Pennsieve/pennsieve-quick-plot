@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 from processor.tools.ts_dsp import (
+    ALL_TOOLS,
     Signal,
     X_DOMAINS,
     Y_DOMAINS,
@@ -32,6 +33,7 @@ from processor.tools.ts_dsp import (
     specs,
     ToolInputError,
 )
+from processor.tools.ts_dsp.dsp_pipeline import dsp_tool
 
 
 def _ts(y, fs=256.0, y_unit="µV", x_domain="time"):
@@ -54,14 +56,41 @@ def _tone_amplitude(y, t, f):
 #    re-tested per tool.
 # ---------------------------------------------------------------------------
 def test_tools_are_registered():
-    # Only opt-in DSP transforms register; raw acquisition (read_signal etc.)
-    # is not a tool.
+    # The registry is the explicit ALL_TOOLS list in ts_dsp/__init__.py;
+    # raw acquisition (reading a file) is not a tool and is not listed.
     assert set(known_names()) >= {"highpass_filter", "energy"}
+    assert len(ALL_TOOLS) == len(known_names())
+
+
+def test_decorating_a_function_does_not_register_it():
+    # @dsp_tool only attaches fn.spec. Registration is the ALL_TOOLS list, so
+    # a decorated function that is not listed is invisible to the runner —
+    # there is no import-side-effect registration to forget or to get wrong.
+    @dsp_tool("not_listed_anywhere", requires={}, produces={})
+    def _orphan(signal):
+        return signal
+
+    assert _orphan.spec.name == "not_listed_anywhere"
+    assert "not_listed_anywhere" not in known_names()
+    with pytest.raises(ToolInputError, match="Unknown processing tool"):
+        apply_dsp_pipeline(_ts(np.ones(8)), [{"tool": "not_listed_anywhere"}])
+
+
+def test_runner_accepts_an_explicit_registry():
+    # The registry is a parameter (defaulting to the package table), so the
+    # driver can be exercised against a tiny fake table.
+    @dsp_tool("double", requires={}, produces={})
+    def _double(signal):
+        return replace(signal, y=signal.y * 2)
+
+    out = apply_dsp_pipeline(_ts(np.ones(8)), [{"tool": "double"}],
+                             registry={"double": _double.spec})
+    assert np.allclose(out.y, 2.0)
 
 
 def test_tool_domains_are_in_the_vocabulary():
     # The gating type-system works by exact string match against the
-    # X_DOMAINS / Y_DOMAINS vocabulary in signal.py. A typo in a tool's
+    # X_DOMAINS / Y_DOMAINS vocabulary in signal_definition.py. A typo in a tool's
     # requires/produces (e.g. "magnitde") would otherwise register fine and
     # just silently never match a gate.
     for spec in specs():

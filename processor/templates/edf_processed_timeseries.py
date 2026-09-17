@@ -89,12 +89,11 @@ from processor.templates.contract import TemplateArg
 from processor.tools.ts_dsp import (
     Signal,
     apply_dsp_pipeline,
-    probe_edf,
-    read_signal,
     resolve_time_unit,
     resolve_volt_unit,
     seconds_to_clock,
 )
+from processor.tools.ts_dsp.io import probe_edf, read_signal
 
 
 ############# TEMPLATE CONTRACT ##################

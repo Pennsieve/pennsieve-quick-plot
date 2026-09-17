@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .registry import dsp_tool, ParamSpec, ToolInputError
+from .dsp_pipeline import dsp_tool, ParamSpec, ToolInputError
 
 
 # Every feature is windowed the same way, so they share one ParamSpec pair.

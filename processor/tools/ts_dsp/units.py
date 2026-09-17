@@ -1,37 +1,16 @@
 """
-ts_dsp.signal — the Signal *contract* for voltage timeseries.
+ts_dsp.units — time and voltage unit vocabulary.
 
-This module is the shared agreement every other piece codes against: the
-EDF reader produces a `Signal`, each DSP tool transforms a `Signal`, and the
-template plots a `Signal`. For all of them to interoperate they must agree
-on (a) the fields and what they mean, and (b) the vocabulary of legal
-domain / unit values. That agreement lives here, in one place everyone
-imports, so nothing drifts into "time" vs "temporal" vs "t".
+The user may type "usec", "microseconds" or "µs"; the EDF header may declare
+"uV" or "mV". These helpers turn any accepted spelling into a numeric factor
+(to seconds / to volts) plus one canonical display symbol, so labels read the
+same regardless of how the unit was spelled. Also the H:M:S clock helpers.
 
-It imports only the standard library, so importing it is cheap and it can be
-depended on by readers, tools, and templates without any cycle.
+Used by the template (parsing the user's inputs), the readers (interpreting
+the file header) and the plot stage (tick labels). Standard library only.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
-
-
-############# DOMAIN VOCABULARY ##################
-# The legal values for a Signal's axis "domain" fields. The DSP type-system
-# (tool `requires` / `produces`) is expressed in these exact strings, so a
-# reader that sets x_domain="time" and a tool that requires x_domain="time"
-# are guaranteed to match. Extend these as new transforms are added.
-X_DOMAINS: tuple[str, ...] = ("time", "frequency")
-# "amplitude" is the raw trace (the only y_domain the reader produces);
-# "magnitude" is a spectrum's per-frequency strength (e.g. fft output). Keeping
-# them distinct lets templates tell "still the raw trace" from "same unit but
-# transformed" (e.g. the y_range guard), and requires-gates match exactly.
-Y_DOMAINS: tuple[str, ...] = (
-    "amplitude", "magnitude", "power", "energy",
-    # windowed time-domain features (see feature_extraction.py)
-    "rms", "zcr", "line_length", "kurtosis", "skewness",
-)
 
 
 ############# UNIT TABLES ##################
@@ -60,43 +39,6 @@ _VOLT_TO_V: dict[str, float] = {
 _VOLT_SYMBOL: dict[float, str] = {1.0: "V", 1e-3: "mV", 1e-6: "µV", 1e-9: "nV"}
 
 
-############# SIGNAL BUNDLE ##################
-@dataclass
-class Signal:
-    """A signal clip plus the axis metadata the plotter renders from.
-
-    `t` and `y` are already expressed in `x_unit` / `y_unit`. Processing
-    stages take a Signal and return a Signal (via dataclasses.replace),
-    updating the four *_domain / *_unit fields as the physical meaning
-    changes.
-    """
-
-    t: "object"          # np.ndarray of x values, in x_unit
-    y: "object"          # np.ndarray of y values, in y_unit
-    fs: float            # sampling rate (Hz) of the source recording
-    channel: str
-    # What `channel` represents: "single_channel" for one trace, "montage"
-    # for a bipolar A-B derivation (then `channel` holds "A-B").
-    channel_kind: str = "single_channel"
-    x_domain: str = "time"
-    x_unit: str = "s"
-    y_domain: str = "amplitude"
-    y_unit: str = "µV"
-    # How the x tick LABELS are rendered (the axis data is always numeric):
-    #   "numeric" -> plain integers/decimals in x_unit, no 1e9-style offset.
-    #   "clock"   -> H:M:S wall clock; `t` then holds seconds-since-midnight.
-    x_tick_style: str = "numeric"
-
-    def x_label(self) -> str:
-        return f"{self.x_domain} ({self.x_unit})"
-
-    def y_label(self) -> str:
-        # Dimensionless quantities (e.g. kurtosis, skewness) have y_unit "";
-        # skip the unit parens rather than rendering "kurtosis ()".
-        return f"{self.y_domain} ({self.y_unit})" if self.y_unit else self.y_domain
-
-
-############# UNIT RESOLUTION ##################
 def _normalise_unit_key(unit: str) -> str:
     """Lowercase, strip whitespace, and drop a trailing plural 's'."""
     key = str(unit).strip().lower()
@@ -107,6 +49,7 @@ def _normalise_unit_key(unit: str) -> str:
     return key
 
 
+############# UNIT RESOLUTION ##################
 def resolve_time_unit(unit: str | None, *, required: bool) -> tuple[float, str | None]:
     """(factor-to-seconds, display symbol) for a time unit.
 
@@ -136,8 +79,8 @@ def resolve_volt_unit(unit: str | None, *, required: bool = True) -> tuple[float
 
     We do not default the unit. When `required` and none is supplied, raise
     and ask the user for one. A supplied unit that is not a voltage unit
-    always raises. (`required=False` is used internally when reading a unit
-    declared inside the file, where a sensible fallback is acceptable.)
+    always raises. (`required=False` is used by readers for a unit declared
+    inside the file, where a blank declaration may fall back to µV.)
     """
     if unit is None or str(unit).strip() == "":
         if required:
@@ -153,6 +96,26 @@ def resolve_volt_unit(unit: str | None, *, required: bool = True) -> tuple[float
             "Use one of: V, mV, uV, nV."
         )
     return factor, _VOLT_SYMBOL[factor]
+
+
+############# CLOCK TIME ##################
+def is_clock_string(value: "object") -> bool:
+    """True for an 'H:M:S'-style string (as opposed to a plain number)."""
+    return isinstance(value, str) and ":" in value
+
+
+def clock_to_seconds(value: str) -> float:
+    """'H:M:S' or 'H:M:S.ms' -> seconds since midnight."""
+    parts = str(value).strip().split(":")
+    if len(parts) != 3:
+        raise RuntimeError(
+            f"Clock time {value!r} is not in H:M:S format (e.g. '14:07:00')."
+        )
+    try:
+        h, m, s = (float(p) for p in parts)
+    except ValueError as exc:
+        raise RuntimeError(f"Clock time {value!r} has non-numeric fields.") from exc
+    return h * 3600.0 + m * 60.0 + s
 
 
 def seconds_to_clock(seconds: float) -> str:

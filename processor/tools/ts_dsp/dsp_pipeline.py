@@ -1,15 +1,18 @@
 """
-ts_dsp.registry 
+ts_dsp.dsp_pipeline — the tool contract and the pipeline runner.
 
-A notebook (_REGISTRY) where every tool writes down its name and its rules.
-A foreman (apply_dsp_pipeline) who takes the user's command ("first filter, then compute energy"), looks each step up in the notebook, checks it makes sense, and only then lets it run.
+Two things live here:
 
-Every DSP tool registers itself here via the `@dsp_tool(...)` decorator,
-declaring its required parameters and its input/output domains. The registry
-is flat (name -> ToolSpec): callers dispatch a tool by *name* and never need
-to know which module it lives in. `apply_dsp_pipeline` walks an ordered list
-of {tool, params} steps, validating each step against the running Signal's
-domains before executing it, and returns the processed Signal.
+  * `@dsp_tool(...)` — the decorator every DSP tool wears. It attaches a
+    `ToolSpec` (name, required parameters, input/output domains) to the
+    function as `fn.spec`. It does NOT register anything: the list of
+    tools is written out explicitly in `ts_dsp/__init__.py` (`ALL_TOOLS`),
+    the same way `templates/__init__.py` lists the templates.
+
+  * `apply_dsp_pipeline(signal, steps)` — the runner. It walks an ordered
+    list of {tool, params} steps, looks each tool up by name, validates the
+    step against the *current* Signal (known tool, required params present,
+    domains compatible) and only then runs it.
 
 Because each tool declares `requires` / `produces`, an illegal ordering
 (e.g. a time-domain filter after an FFT that produced a frequency-domain
@@ -17,14 +20,11 @@ signal) is rejected automatically — there is no need to enumerate forbidden
 combinations.
 
 `produces` is a delta: list an axis/domain only if the applied tool changes
-it; otherwise pass the original axis/domain through untouched (so a tool
-that changes nothing declares `produces={}`, mirroring how the tools
-themselves use dataclasses.replace to set only the fields they change).
+it; otherwise the original axis/domain passes through untouched (a tool that
+changes nothing declares `produces={}`, mirroring how the tools themselves
+use dataclasses.replace to set only the fields they change).
 
-This module imports only the standard library. Tools read a Signal's fields
-by attribute and return a modified copy via dataclasses.replace, so nothing
-here needs to import the Signal class — which keeps the dependency one-way
-(tools/templates import the registry; the registry imports nothing back).
+This module imports only the standard library.
 """
 
 from __future__ import annotations
@@ -46,37 +46,35 @@ class ToolInputError(RuntimeError):
 class ParamSpec:
     """One parameter a tool accepts."""
 
-    name: str                 # e.g. highpass-filter cutoff
+    name: str                 # e.g. cutoff
     required: bool = True
     description: str = ""
-    unit: str = ""            # e.g. Hz 
+    unit: str = ""            # e.g. Hz
 
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """A registered tool: its callable plus the metadata the driver and the
+    """A registered tool: its callable plus the metadata the runner and the
     (generated) MCP schema read."""
 
     name: str                 # e.g. highpass_filter
     func: "object"            # Callable[[Signal, ...], Signal]
     requires: dict            # axes that MUST match, e.g. {"x_domain": "time"}
-    produces: dict            # axes this tool sets on its output Signal, e.g. {"x_domain": "frequency"}
-    params: tuple             # tuple[ParamSpec, ...]; the list of ParaSpec from above
+    produces: dict            # axes this tool sets on its output, e.g. {"x_domain": "frequency"}
+    params: tuple             # tuple[ParamSpec, ...]
     description: str = ""
-
-
-_REGISTRY: dict[str, ToolSpec] = {}
 
 
 def dsp_tool(name: str, *, requires: dict, produces: dict,
              params: tuple = (), description: str = ""):
-    """Register a Signal -> Signal function as a named, domain-tagged tool."""
+    """Attach a ToolSpec to a Signal -> Signal function as `fn.spec`.
+
+    Registration is separate and explicit: add the function to `ALL_TOOLS`
+    in `ts_dsp/__init__.py`.
+    """
 
     def deco(fn):
-        # rejects if a second tool tries to register under an already-taken name
-        if name in _REGISTRY:
-            raise RuntimeError(f"Duplicate DSP tool registration: {name!r}.")
-        _REGISTRY[name] = ToolSpec(
+        fn.spec = ToolSpec(
             name=name, func=fn, requires=dict(requires), produces=dict(produces),
             params=tuple(params), description=description,
         )
@@ -85,24 +83,11 @@ def dsp_tool(name: str, *, requires: dict, produces: dict,
     return deco
 
 
-def get(name: str) -> "ToolSpec | None":
-    return _REGISTRY.get(name)
-
-
-def known_names() -> list[str]:
-    return sorted(_REGISTRY)
-
-
-def specs() -> list[ToolSpec]:
-    """All registered specs, name-sorted — used by the schema dumper."""
-    return [_REGISTRY[n] for n in known_names()]
-
-
 def _check_params(spec: ToolSpec, params: dict) -> None:
     given = set(params)
     allowed = {p.name for p in spec.params}
     for p in spec.params:
-        # did user miss/skip any required parameter to run the tool?
+        # did the user miss a required parameter?
         if p.required and p.name not in given:
             hint = f" ({p.description})" if p.description else ""
             unit = f" [{p.unit}]" if p.unit else ""
@@ -110,7 +95,7 @@ def _check_params(spec: ToolSpec, params: dict) -> None:
                 f"{spec.name} requires parameter {p.name!r}{unit}{hint}."
             )
     unknown = given - allowed
-    # did user input any parameter that does not exist?
+    # did the user pass a parameter this tool does not have?
     if unknown:
         raise ToolInputError(
             f"{spec.name} got unknown parameter(s): {', '.join(sorted(unknown))}. "
@@ -128,47 +113,54 @@ def _check_domains(spec: ToolSpec, signal) -> None:
             )
 
 
-def apply_dsp_pipeline(signal, steps):
+def apply_dsp_pipeline(signal, steps, registry: "dict[str, ToolSpec] | None" = None):
     """Run an ordered list of {tool, params} steps on `signal`.
-    e.g. 
+
+    e.g.
     [ {tool: "highpass_filter", params: {cutoff: 1.0}},
-      {tool: "energy",          params: {}} ]
+      {tool: "energy",          params: {window_size: 1, window_stride: 0.5}} ]
 
     Each step is validated (known tool, required params present, domains
     compatible with the running signal) *before* it executes, so a bad
     request fails fast with a specific ToolInputError. Returns the processed
     Signal. An empty / falsy `steps` returns the signal unchanged.
+
+    `registry` defaults to the package's tool table (`ts_dsp._REGISTRY`);
+    it is a parameter so tests can run the driver against a tiny fake table.
     """
-    # if the list is empty, return the signal untouched (i.e. no processing)
+    if registry is None:
+        from . import _REGISTRY  # lazy: __init__ imports this module
+        registry = _REGISTRY
+
     if not steps:
         return signal
-    # if list malformed, raise the error
     if not isinstance(steps, (list, tuple)):
         raise ToolInputError(
             f"pipeline must be a list of steps; got {type(steps).__name__}."
         )
-    # Then, for each step in the list
     for i, step in enumerate(steps):
-        # is the step/tool name shaped correctly?
+        # 1. shape of the step
         if not isinstance(step, dict) or "tool" not in step:
             raise ToolInputError(
                 f"pipeline step {i} must be an object with a 'tool' name; got {step!r}."
             )
-        spec = get(step["tool"])
-        # is the tool registered?
+        # 2. known tool?
+        spec = registry.get(step["tool"])
         if spec is None:
             raise ToolInputError(
                 f"Unknown processing tool {step['tool']!r}. "
-                f"Available tools: {', '.join(known_names()) or '(none)'}."
+                f"Available tools: {', '.join(sorted(registry)) or '(none)'}."
             )
+        # 3. parameters
         params = step.get("params") or {}
-        # is the param shaped correctly?
         if not isinstance(params, dict):
             raise ToolInputError(
                 f"params for step {i} ({spec.name}) must be an object; got "
                 f"{type(params).__name__}."
             )
         _check_params(spec, params)
+        # 4. is the current signal the right kind of data for this tool?
         _check_domains(spec, signal)
+        # 5. run
         signal = spec.func(signal, **params)
     return signal

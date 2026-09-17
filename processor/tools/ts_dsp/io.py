@@ -14,7 +14,8 @@ this module at startup stays cheap.
 
 from __future__ import annotations
 
-from .signal import Signal, resolve_volt_unit
+from .signal_definition import Signal
+from .units import resolve_volt_unit
 
 
 ############# CHANNEL LOOKUP ##################

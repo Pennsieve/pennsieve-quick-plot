@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .registry import dsp_tool, ParamSpec, ToolInputError
+from .dsp_pipeline import dsp_tool, ParamSpec, ToolInputError
 
 
 def _time_series(signal, tool_name, min_samples=2):
