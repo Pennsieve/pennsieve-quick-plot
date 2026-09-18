@@ -1,0 +1,153 @@
+{
+  "templates": [
+    {
+      "name": "csv_column_distributions",
+      "extensions": [
+        ".csv",
+        ".tsv"
+      ],
+      "summary": "histogram grid, one per numeric column (text columns skipped)",
+      "needs_args": false,
+      "pipeline_tools": null,
+      "args": [],
+      "example_args": null,
+      "notes": ""
+    },
+    {
+      "name": "edf_processed_timeseries",
+      "extensions": [
+        ".edf"
+      ],
+      "summary": "voltage trace for one channel, or a bipolar montage of two channels, over a chosen time window, with optional DSP processing (scalp EEG / intracranial iEEG); \"plot channel F8 from 10s to 15s\", \"show the F7-F8 montage for the first minute\"",
+      "needs_args": true,
+      "pipeline_tools": "ts_dsp",
+      "args": [
+        {
+          "name": "channel",
+          "type": "string",
+          "required": true,
+          "unit": "",
+          "description": "channel/label name, e.g. \"F8\", \"EKG2\""
+        },
+        {
+          "name": "channel2",
+          "type": "string",
+          "required": false,
+          "unit": "",
+          "description": "second channel; when given, the trace is the bipolar montage channel-channel2 (e.g. \"F7\"-\"F8\"). Both channels must share a sampling rate"
+        },
+        {
+          "name": "start_time",
+          "type": "number or \"HH:MM:SS\" string",
+          "required": true,
+          "unit": "",
+          "description": "window start: a number (in `time_unit`) OR a wall-clock \"HH:MM:SS\" string"
+        },
+        {
+          "name": "end_time",
+          "type": "number or \"HH:MM:SS\" string",
+          "required": false,
+          "unit": "",
+          "description": "window end; provide EXACTLY ONE of end_time / duration"
+        },
+        {
+          "name": "duration",
+          "type": "number",
+          "required": false,
+          "unit": "",
+          "description": "window length in `time_unit`; provide EXACTLY ONE of end_time / duration"
+        },
+        {
+          "name": "time_unit",
+          "type": "string",
+          "required": false,
+          "unit": "",
+          "description": "unit for NUMERIC start/end/duration values (us, ms, s, min, h). REQUIRED whenever any of those is a plain number; omit only when all times are \"HH:MM:SS\" clock strings"
+        },
+        {
+          "name": "y_range",
+          "type": "positive number or [min, max] pair",
+          "required": false,
+          "unit": "",
+          "description": "y-axis extent: a single positive number N for a symmetric [-N, +N], or an explicit [min, max] pair; omit to auto-scale the y-axis to the data. Recommended for raw voltage traces (EEG is conventionally read at a fixed scale); ignored when the pipeline moves the y-axis off voltage (e.g. fft, psd, energy)"
+        },
+        {
+          "name": "y_unit",
+          "type": "string",
+          "required": false,
+          "unit": "",
+          "description": "voltage unit the y-axis / y_range are displayed in (V, mV, uV, nV); omit to use the unit the file itself declares for the channel"
+        }
+      ],
+      "example_args": {
+        "channel": "F8",
+        "start_time": 10,
+        "duration": 5,
+        "time_unit": "s",
+        "y_range": 200,
+        "y_unit": "uV"
+      },
+      "notes": "There are NO silent defaults for the data selection: a missing channel, time, or time_unit (for numeric times) makes the canned render fail (it then falls back to the agent). y_range and y_unit are display settings with truthful defaults: omitted y_range auto-scales the y-axis, and omitted y_unit displays in the unit the file itself declares. The window may not exceed 600 s."
+    },
+    {
+      "name": "fcs_channel_histograms",
+      "extensions": [
+        ".fcs"
+      ],
+      "summary": "per-channel marginal histograms; \"what's the distribution in each channel\"",
+      "needs_args": false,
+      "pipeline_tools": null,
+      "args": [],
+      "example_args": null,
+      "notes": ""
+    },
+    {
+      "name": "fcs_compensation_heatmap",
+      "extensions": [
+        ".fcs"
+      ],
+      "summary": "$SPILL matrix heatmap; \"how much spillover between fluorophores\" (panel QC)",
+      "needs_args": false,
+      "pipeline_tools": null,
+      "args": [],
+      "example_args": null,
+      "notes": ""
+    },
+    {
+      "name": "fcs_fsc_ssc_scatter",
+      "extensions": [
+        ".fcs"
+      ],
+      "summary": "FSC vs SSC biaxial; \"what populations are in this file\" (the canonical first-look plot)",
+      "needs_args": false,
+      "pipeline_tools": null,
+      "args": [],
+      "example_args": null,
+      "notes": ""
+    },
+    {
+      "name": "fcs_time_diagnostics",
+      "extensions": [
+        ".fcs"
+      ],
+      "summary": "channel-vs-time hexbin grid; \"is acquisition healthy / any drift\" (QC view)",
+      "needs_args": false,
+      "pipeline_tools": null,
+      "args": [],
+      "example_args": null,
+      "notes": ""
+    },
+    {
+      "name": "tsv_sessions_lineplot",
+      "extensions": [
+        ".tsv"
+      ],
+      "summary": "subject age across visit sessions as a line plot; \"plot age across sessions\", \"how does age change over sessions\"",
+      "needs_args": false,
+      "pipeline_tools": null,
+      "args": [],
+      "example_args": null,
+      "notes": ""
+    }
+  ]
+}

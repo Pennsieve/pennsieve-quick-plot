@@ -35,6 +35,7 @@ from __future__ import annotations
 
 NAME = "tsv_sessions_lineplot"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".tsv",)
+SUMMARY = "subject age across visit sessions as a line plot; \"plot age across sessions\", \"how does age change over sessions\""
 
 # Bounds on the number of plottable sessions (checked on the cleaned data,
 # i.e. after dropping rows with no usable age). Below MIN there's no line to

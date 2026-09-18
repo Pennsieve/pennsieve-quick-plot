@@ -35,6 +35,7 @@ from __future__ import annotations
 
 NAME = "fcs_compensation_heatmap"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".fcs",)
+SUMMARY = "$SPILL matrix heatmap; \"how much spillover between fluorophores\" (panel QC)"
 
 
 def _parse_spill(spill_text: str) -> tuple[list[str], list[list[float]]]:
