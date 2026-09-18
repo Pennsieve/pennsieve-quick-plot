@@ -11,30 +11,31 @@ show the FFT."*
 ## The shape
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 420, "nodeSpacing": 30, "rankSpacing": 36}}}%%
 flowchart TD
-    MCP["plot_file  (MCP tool)<br/><small>pennsieve-mcp/internal/tools/plot_file.go</small>"]
-    MAIN["try_canned_template()<br/><small>processor/main.py</small>"]
-    RENDER["render()<br/><small>processor/templates/edf_processed_timeseries.py</small>"]
-    PARSE["_parse() → _validate()<br/><small>templates/edf_processed_timeseries.py</small>"]
-    LOAD["load_signal(path, params)<br/><small>processor/readers/ → edf_to_signal.py</small>"]
-    PIPE["apply_dsp_pipeline(signal, steps)<br/><small>tools/ts_dsp/dsp_pipeline.py</small>"]
-    T0["notch_filter<br/><small>tools/ts_dsp/filters.py</small>"]
-    T1["fft<br/><small>tools/ts_dsp/frequency.py</small>"]
-    PLOT["_plot(signal, params, out)<br/><small>templates/edf_processed_timeseries.py</small>"]
+    MCP["plot_file (MCP tool)<br/>pennsieve-mcp/internal/tools/plot_file.go"]
+    MAIN["try_canned_template()<br/>processor/main.py"]
+    RENDER["render()<br/>processor/templates/edf_processed_timeseries.py"]
+    PARSE["_parse() then _validate()<br/>processor/templates/edf_processed_timeseries.py"]
+    LOAD["load_signal(path, params)<br/>processor/readers/__init__.py<br/>processor/readers/edf_to_signal.py"]
+    PIPE["apply_dsp_pipeline(signal, steps)<br/>processor/tools/ts_dsp/dsp_pipeline.py"]
+    T0["notch_filter<br/>processor/tools/ts_dsp/filters.py"]
+    T1["fft<br/>processor/tools/ts_dsp/frequency.py"]
+    PLOT["_plot(signal, params, out)<br/>processor/templates/edf_processed_timeseries.py"]
     PNG(["figure.png"])
 
     MCP -- "TEMPLATE, TEMPLATE_ARGS (JSON)" --> MAIN
     MAIN -- "render(path, out, **template_args)" --> RENDER
     RENDER --> PARSE
     PARSE -- "RenderParams" --> LOAD
-    LOAD -- "raw Signal (time / amplitude)" --> PIPE
+    LOAD -- "raw Signal: time / amplitude" --> PIPE
     PIPE -- "step 0" --> T0
-    T0 -- "step 1 (still time / amplitude)" --> T1
-    T1 -- "spectrum Signal (frequency / magnitude)" --> PLOT
+    T0 -- "step 1: still time / amplitude" --> T1
+    T1 -- "spectrum Signal: frequency / magnitude" --> PLOT
     PLOT --> PNG
 
-    classDef tool fill:#eef3f6,stroke:#2a6c97;
-    classDef runner fill:#f4f0e7,stroke:#b8ad8f;
+    classDef tool fill:#eef3f6,stroke:#2a6c97,color:#1c2430;
+    classDef runner fill:#f4f0e7,stroke:#b8ad8f,color:#1c2430;
     class T0,T1 tool;
     class PIPE runner;
 ```
@@ -183,6 +184,53 @@ come straight off the `Signal` (`"frequency (Hz)"`, `"magnitude (µV)"`).
 `figure.png` exists, so the run succeeds. Had any step raised
 (`RuntimeError`, or `ToolInputError` from the pipeline), `try_canned_template`
 logs it and the processor falls back to the LLM agent loop.
+
+## Run it locally
+
+You have an EDF file and want the PNG without the platform in the loop.
+The processor reads its request from environment variables, so one command
+does it:
+
+```sh
+pip install -r requirements-dev.txt          # numpy, scipy, pyedflib, matplotlib, pytest
+mkdir -p /tmp/qp/in /tmp/qp/out
+cp /path/to/your/recording.edf /tmp/qp/in/
+
+INPUT_DIR=/tmp/qp/in \
+OUTPUT_DIR=/tmp/qp/out \
+TARGET_FILE_NAME=recording.edf \
+TEMPLATE=edf_processed_timeseries \
+TEMPLATE_ARGS='{"channel": "F7", "channel2": "Fp1",
+                "start_time": 500, "duration": 50, "time_unit": "s",
+                "pipeline": [{"tool": "notch_filter", "params": {"w0": 60}},
+                             {"tool": "fft", "params": {}}]}' \
+python -m processor.main
+
+open /tmp/qp/out/figure.png                  # macOS; xdg-open on Linux
+```
+
+`TEMPLATE_ARGS` is exactly the JSON the MCP tool would have built from the
+user's sentence (the example above is the request traced on this page); the
+keys are the ones listed under `ARGS_SPEC` in the template. Drop `pipeline`
+for a raw trace; use `"end_time"` instead of `"duration"`, or clock strings
+such as `"start_time": "13:12:36"` with no `time_unit`, as the template
+allows. A warning that the layer site-packages were not found is expected
+outside AWS and harmless: locally the dependencies come from your own
+environment. If the template raises, the processor logs the reason and then
+tries the LLM agent path, which needs `PROMPT` and `LLM_GOVERNOR_URL`; for a
+template-only run you can ignore that second error.
+
+To call the template from Python instead (e.g. in a notebook):
+
+```python
+from processor.templates import edf_processed_timeseries as t
+t.render("/tmp/qp/in/recording.edf", "/tmp/qp/out/figure.png",
+         channel="F7", channel2="Fp1", start_time=500, duration=50, time_unit="s",
+         pipeline=[{"tool": "notch_filter", "params": {"w0": 60}}, {"tool": "fft"}])
+```
+
+`make run` (docker-compose, reads `dev.env`) exercises the same path inside
+the container image; see the top-level README.
 
 ## Adding things
 
