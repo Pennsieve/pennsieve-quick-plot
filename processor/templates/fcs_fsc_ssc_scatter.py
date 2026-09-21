@@ -31,6 +31,7 @@ from __future__ import annotations
 
 NAME = "fcs_fsc_ssc_scatter"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".fcs",)
+SUMMARY = "FSC vs SSC biaxial; \"what populations are in this file\" (the canonical first-look plot)"
 
 # Above this event count, hexbin density beats a scatter plot for
 # readability. Below it, individual dots are still useful.
