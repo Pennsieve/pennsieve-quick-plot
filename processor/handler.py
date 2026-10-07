@@ -8,6 +8,7 @@ The platform passes these payload keys (subset relevant to quick-plot):
   integrationId         → INTEGRATION_ID
   executionRunId        → EXECUTION_RUN_ID
   sessionToken          → SESSION_TOKEN
+  callbackToken         → CALLBACK_TOKEN   (if the runtime ever forwards it)
   refreshToken          → REFRESH_TOKEN
   llmGovernorFunction   → LLM_GOVERNOR_URL
 
@@ -36,6 +37,9 @@ _PAYLOAD_TO_ENV = {
     "integrationId": "INTEGRATION_ID",
     "executionRunId": "EXECUTION_RUN_ID",
     "sessionToken": "SESSION_TOKEN",
+    # Not sent by the runtime today; bridged so report.push_report_to_workflow_service can
+    # prefer it the day the platform forwards the per-run callback token.
+    "callbackToken": "CALLBACK_TOKEN",
     "refreshToken": "REFRESH_TOKEN",
     "llmGovernorFunction": "LLM_GOVERNOR_URL",
     "layersDir": "LAYERS_DIR",
