@@ -24,6 +24,7 @@ are set on the Lambda function configuration, not per-invocation.
 
 import logging
 import os
+import sys
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
 log = logging.getLogger("quick-plot")
@@ -66,9 +67,12 @@ def handler(event, context):
         if isinstance(value, str):
             os.environ[key] = value
 
-    # Run the same logic as ECS mode
-    from processor.main import run
-    run()
+    # Run the same logic as ECS mode. A non-zero code means run() raised a
+    # PlotError (already logged + reported); fail the invocation the same
+    # way the old sys.exit(1) did so Step Functions marks the run FAILED.
+    from processor.main import main
+    if main() != 0:
+        sys.exit(1)
 
     return {
         "status": "success",
