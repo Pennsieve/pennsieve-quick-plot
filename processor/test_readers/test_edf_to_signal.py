@@ -29,6 +29,7 @@ import pyedflib
 import pytest
 
 from processor import readers
+from processor.errors import PlotDataUnavailableError, PlotErrorCode
 from processor.readers import edf_to_signal as reader
 from processor.templates.edf_processed_timeseries import RenderParams, TimePoint
 
@@ -91,6 +92,29 @@ def test_load_signal_rejects_unknown_extension(tmp_path):
 def test_load_signal_rejects_missing_file(tmp_path):
     with pytest.raises(RuntimeError, match="does not exist"):
         readers.load_signal(str(tmp_path / "nope.edf"), _params())
+
+
+def test_unreadable_file_is_data_unavailable(tmp_path):
+    # Scenario: the file exists and has the right extension but is not EDF.
+    # The library's error is translated into a PlotError that blames the data.
+    bad = tmp_path / "rec.edf"
+    bad.write_text("not an edf file")
+    with pytest.raises(PlotDataUnavailableError) as ei:
+        readers.load_signal(str(bad), _params())
+    assert ei.value.error_code is PlotErrorCode.UNREADABLE_FILE
+    assert ei.value.error_facts["file"] == "rec.edf"
+
+
+def test_missing_library_is_not_blamed_on_the_file(tmp_path, monkeypatch):
+    # Scenario: pyedflib is missing on the compute node. That must stay an
+    # ImportError (an environment problem for main.py to name), not become
+    # "unreadable_file", which would wrongly tell the user to pick other data.
+    def no_lib(path):
+        raise ImportError("No module named 'pyedflib'", name="pyedflib")
+
+    monkeypatch.setattr(reader, "_read_header", no_lib)
+    with pytest.raises(ImportError):
+        reader.load_signal(str(_write_edf(tmp_path / "rec.edf")), _params())
 
 
 def test_supported_extensions_lists_edf():

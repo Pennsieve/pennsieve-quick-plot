@@ -68,6 +68,8 @@ pipeline:            unknown tool; missing/invalid tool parameter; a step
 
 from __future__ import annotations
 
+from processor.errors import PlotErrorCode, PlotDataUnavailableError, PlotInvalidInputError
+
 import os
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -200,7 +202,7 @@ def _parse_time(value, time_factor: float, *, field: str) -> "TimePoint | None":
     try:
         return TimePoint(float(value) * time_factor, is_clock=False)
     except (TypeError, ValueError) as exc:
-        raise RuntimeError(f"{field} {value!r} is not a number.") from exc
+        raise PlotInvalidInputError(PlotErrorCode.INVALID_ARGUMENT, f"{field} {value!r} is not a number.") from exc
 
 
 def _parse_y_range(y_range) -> "tuple[float, float] | None":
@@ -210,7 +212,8 @@ def _parse_y_range(y_range) -> "tuple[float, float] | None":
     if isinstance(y_range, (int, float)) and not isinstance(y_range, bool):
         n = float(y_range)
         if n <= 0:
-            raise RuntimeError(
+            raise PlotInvalidInputError(
+                PlotErrorCode.INVALID_ARGUMENT,
                 f"y-axis range shorthand must be a positive number; got {n}."
             )
         return -n, n
@@ -218,13 +221,15 @@ def _parse_y_range(y_range) -> "tuple[float, float] | None":
         try:
             ymin, ymax = float(y_range[0]), float(y_range[1])
         except (TypeError, ValueError) as exc:
-            raise RuntimeError(f"y-axis range {y_range!r} has non-numeric bounds.") from exc
+            raise PlotInvalidInputError(PlotErrorCode.INVALID_ARGUMENT, f"y-axis range {y_range!r} has non-numeric bounds.") from exc
         if not ymin < ymax:
-            raise RuntimeError(
+            raise PlotInvalidInputError(
+                PlotErrorCode.INVALID_ARGUMENT,
                 f"y-axis range min ({ymin}) must be strictly less than max ({ymax})."
             )
         return ymin, ymax
-    raise RuntimeError(
+    raise PlotInvalidInputError(
+        PlotErrorCode.INVALID_ARGUMENT,
         f"y-axis range {y_range!r} must be a single positive number "
         "(± shorthand) or a [min, max] pair."
     )
@@ -247,7 +252,7 @@ def _parse(*, channel, channel2, start_time, end_time, duration, time_unit,
         try:
             duration_s = float(duration) * time_factor
         except (TypeError, ValueError) as exc:
-            raise RuntimeError(f"duration {duration!r} is not a number.") from exc
+            raise PlotInvalidInputError(PlotErrorCode.INVALID_ARGUMENT, f"duration {duration!r} is not a number.") from exc
 
     return RenderParams(
         channel=None if _blank(channel) else str(channel),
@@ -269,15 +274,17 @@ def _validate(params: RenderParams) -> None:
     """Rules that need only the user's inputs. Anything that needs the
     file's header (channel exists, window fits, ...) is the reader's job."""
     if params.channel is None:
-        raise RuntimeError("A channel name is required (e.g. 'F8').")
+        raise PlotInvalidInputError(PlotErrorCode.MISSING_ARGUMENT, "A channel name is required (e.g. 'F8').")
     if params.start is None:
-        raise RuntimeError("A start time is required.")
+        raise PlotInvalidInputError(PlotErrorCode.MISSING_ARGUMENT, "A start time is required.")
     if params.end is None and params.duration_s is None:
-        raise RuntimeError(
+        raise PlotInvalidInputError(
+            PlotErrorCode.MISSING_ARGUMENT,
             "Provide an end time or a duration for the window (exactly one)."
         )
     if params.montage and params.channel.strip().lower() == params.channel2.strip().lower():
-        raise RuntimeError(
+        raise PlotInvalidInputError(
+            PlotErrorCode.INCOMPATIBLE_CHANNELS,
             f"A montage needs two different channels, but both are {params.channel!r}."
         )
 
@@ -375,7 +382,8 @@ def render(
     """Render an (optionally processed) timeseries clip from an EDF file."""
     ext = os.path.splitext(target_file_path)[1].lower()
     if ext not in SUPPORTED_EXTENSIONS:
-        raise RuntimeError(
+        raise PlotDataUnavailableError(
+            PlotErrorCode.UNSUPPORTED_FILE_FORMAT,
             f"{target_file_path!r} is not an EDF file (extension {ext!r}). "
             f"Supported: {', '.join(SUPPORTED_EXTENSIONS)}."
         )

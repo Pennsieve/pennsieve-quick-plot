@@ -24,6 +24,7 @@ from processor.errors import (
     PlotResourceLimitError,
     wrap_unexpected_exception,
 )
+from processor.tools.ts_dsp.dsp_pipeline import ToolInputError
 
 SUBCLASSES = [PlotInvalidInputError, PlotDataUnavailableError, PlotResourceLimitError,
               PlotEnvironmentError, PlotInternalError]
@@ -95,7 +96,18 @@ def test_facts_are_copied_and_stage_is_unset_until_a_site_sets_it():
     assert err.source_stage is None
 
 
-# ---- Scenario 2: an exception nobody in this package raised ------------------
+# ---- Scenario 2: the DSP tools' own error type joined the family -------------
+
+def test_tool_input_error_is_an_invalid_input_plot_error_at_stage_tool():
+    err = ToolInputError("unknown tool 'fft2'")
+    assert isinstance(err, PlotInvalidInputError)
+    assert err.error_code is PlotErrorCode.INVALID_TOOL_ARGUMENT
+    assert err.source_stage is PlotErrorStage.TOOL
+    assert err.user_message == "unknown tool 'fft2'"
+    assert ToolInputError("m", code=PlotErrorCode.UNKNOWN_TOOL).error_code is PlotErrorCode.UNKNOWN_TOOL
+
+
+# ---- Scenario 3: an exception nobody in this package raised ------------------
 # A library inside a reader or template blows up. wrap_unexpected_exception()
 # must give it the right category without ever leaking raw text to the user,
 # and must leave a real PlotError alone.
