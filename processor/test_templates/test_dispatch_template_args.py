@@ -2,8 +2,8 @@
 Tests for try_canned_template's handling of TEMPLATE_ARGS — the JSON blob
 MCP's plot_file forwards as processorParams.template_args. Verifies the
 processor decodes it and splats it into the template's render(**kwargs),
-preserves non-string types, and reports a malformed / non-object blob as
-an invalid_input PlotError (run() falls back to the agent and records it).
+preserves non-string types, and classifies a malformed / non-object blob as
+invalid_input (which run() treats as fail-fast: no agent fallback).
 
 pytest processor/test_templates/test_dispatch_template_args.py
 """
@@ -62,6 +62,7 @@ def test_malformed_json_is_invalid_input(monkeypatch, tmp_path):
     assert result.produced is False
     assert result.error.error_category.value == "invalid_input"
     assert result.error.error_code.value == "template_args_invalid_json"
+    assert result.error.error_category in main.FAIL_FAST   # run() will not call the agent
     assert stub.received is None          # render never reached
     assert not out.exists()
 

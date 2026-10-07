@@ -13,8 +13,10 @@ Two render paths share this single processor:
      calls the matching template's render() function. No LLM, ~5s.
 
   2. **LLM agent loop** (flexible, expensive). Runs when TEMPLATE is
-     unset, or when the canned render failed (the reason is recorded on
-     the run report as fallback_trigger_error). Uses bash /
+     unset, or when the canned render failed for a reason the user can't
+     fix (environment / internal — see FAIL_FAST below). Template failures
+     the user can act on (invalid_input, data_unavailable, resource_limit)
+     stop the run with the template's own message instead. Uses bash /
      read_file / write_file tools via the LLM Governor to inspect the
      file and write matplotlib code. ~30s, ~$0.15-0.19.
 
@@ -49,6 +51,7 @@ from processor.errors import (
     PlotDataUnavailableError,
     PlotEnvironmentError,
     PlotError,
+    PlotErrorCategory,
     PlotErrorCode,
     PlotErrorStage,
     PlotInternalError,
@@ -66,6 +69,17 @@ logging.basicConfig(
 log = logging.getLogger("quick-plot")
 
 FIGURE_FILENAME = "figure.png"
+
+# The gate's policy: when the canned template fails with
+# one of these categories, stop and show the template's own message. The
+# user can act on it (fix the request, pick other data, ask for less), and
+# a ~30 s / ~$0.15 agent detour would only hide it. environment / internal
+# failures fall back to the agent, which may still rescue the request.
+FAIL_FAST = frozenset({
+    PlotErrorCategory.INVALID_INPUT,
+    PlotErrorCategory.DATA_UNAVAILABLE,
+    PlotErrorCategory.RESOURCE_LIMIT,
+})
 
 # When set to "1", bypass the LLM entirely and use the built-in stub script
 # in processor/stub_script.py. Used for smoke-tests of the EFS layer mount +
@@ -133,9 +147,11 @@ def try_canned_template(config: dict, target_file_path: str, output_path: str) -
     Run the canned template named in config["template"], if any.
 
     Returns CannedOutcome(produced=True) when a template was selected AND it
-    produced figure.png. Otherwise `error` says why, as a PlotError; the
-    caller (run) falls back to the agent loop and records the template
-    error on the report as `fallback_trigger_error`.
+    produced figure.png. Otherwise `error` says why, as a PlotError, and
+    the caller (run) decides whether the agent loop gets a turn: FAIL_FAST
+    categories do not fall back — the user gets the template's own message
+    instead of a 30 s detour — everything else does, with the template
+    error recorded on the report as `fallback_trigger_error`.
 
     TEMPLATE unset → CannedOutcome() with no error: the caller didn't ask
     for a template. Any partial figure.png left behind by a failing render
@@ -295,10 +311,17 @@ def run(report: PlotRunReport | None = None):
         report.figure_generated_by, report.figure_bytes = "template", size
         return
 
-    # The template failed: the agent gets a turn. Keep the reason so the
-    # user learns why the canned plot didn't happen even when the agent
-    # succeeds.
+    # The gate. A template failure the *user* can fix —
+    # wrong channel, window outside the recording, bad settings — stops
+    # here with the template's own message. Spending ~30 s / ~$0.15 on the
+    # agent would only hide that message behind a different plot, or a
+    # second failure for an unrelated reason.
     if canned.error is not None:
+        if canned.error.error_category in FAIL_FAST:
+            raise canned.error
+        # environment / internal: the agent may still rescue the request.
+        # Keep the reason so the user learns why the canned plot didn't
+        # happen even when the agent succeeds.
         report.fallback_trigger_error = canned.error
         log.warning("Template failed [%s/%s]; falling back to agent loop.",
                     canned.error.error_category.value, canned.error.error_code.value)
