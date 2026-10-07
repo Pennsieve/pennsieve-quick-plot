@@ -181,9 +181,121 @@ come straight off the `Signal` (`"frequency (Hz)"`, `"magnitude (µV)"`).
 
 ### Back in `main.py`
 
-`figure.png` exists, so the run succeeds. Had any step raised
-(`RuntimeError`, or `ToolInputError` from the pipeline), `try_canned_template`
-logs it and the processor falls back to the LLM agent loop.
+`figure.png` exists, so `try_canned_template()` returns
+`CannedOutcome(produced=True)`, `run()` notes on the run report that the
+template drew the figure and how big it is, and `main()` marks the run
+`succeeded` and pushes the report. Had any step raised, the request would
+have taken one of the two routes below.
+
+## How a failed request flows through
+
+Every failure is a `PlotError` (`processor/errors.py`): one of five classes
+named for who can fix it (`PlotInvalidInputError`, `PlotDataUnavailableError`,
+`PlotResourceLimitError`, `PlotEnvironmentError`, `PlotInternalError`), raised
+by the code that found the problem and still has the facts. It travels up
+through `render()` untouched and is caught in `main.py`, where `run()` decides
+between two routes by its category (`FAIL_FAST`):
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 360, "nodeSpacing": 30, "rankSpacing": 36}}}%%
+flowchart TD
+    RAISE["a step raises a PlotError<br/>(reader / tool / template)"]
+    CATCH["try_canned_template() catches it<br/>returns CannedOutcome(error=…)"]
+    GATE{"run(): error_category<br/>in FAIL_FAST?"}
+    STOP["raise it — no agent<br/>main(): run_failure_error, exit 1"]
+    AGENT["record fallback_trigger_error<br/>agent loop draws the figure"]
+    REPORT(["main() finally: log one line,<br/>push the run report"])
+
+    RAISE --> CATCH --> GATE
+    GATE -- "invalid_input, data_unavailable,<br/>resource_limit" --> STOP --> REPORT
+    GATE -- "environment, internal" --> AGENT --> REPORT
+
+    classDef stop fill:#f6ecec,stroke:#a33a3a,color:#1c2430;
+    classDef fb fill:#eef3f6,stroke:#2a6c97,color:#1c2430;
+    class STOP stop;
+    class AGENT fb;
+```
+
+### Route A — fail fast: the user asked for a channel the file doesn't have
+
+Same request as above, but `"channel": "ZZ"`; the file has F7, F8, FP1.
+
+1. **Step 2, `load_signal()`** (`readers/edf_to_signal.py`) — `_Header.index("ZZ")`
+   finds no match and raises
+
+   ```python
+   PlotInvalidInputError(
+       PlotErrorCode.UNKNOWN_CHANNEL,
+       "Channel 'ZZ' is not in the file. Available channels: F7, F8, FP1",
+       error_facts={"channel": "ZZ", "available_channels": ["F7", "F8", "FP1"]},
+       source_stage=PlotErrorStage.READER)
+   ```
+
+   The reader is the only place that knows the channel list, so the reader
+   is where the message is written.
+2. **`render()`** — does not catch it; the error passes straight up.
+3. **`try_canned_template()`** (`main.py`) — catches it. It is already a
+   `PlotError`, so `wrap_unexpected_exception()` hands it back unchanged and
+   `source_stage` stays `reader`. Any half-written `figure.png` is removed and
+   `CannedOutcome(error=…)` is returned.
+4. **`run()`** — `invalid_input` is in `FAIL_FAST`: the user can fix this and
+   the agent cannot, so no fallback. `raise canned.error`.
+5. **`main()`** — `except PlotError`: `report.run_failure_error = err`, exit
+   code 1. The `finally` logs one line and pushes the report to the run's
+   outputs in workflow-service:
+
+   ```
+   Quick-plot failed [invalid_input/unknown_channel at reader]: Channel 'ZZ' is not in the file. Available channels: F7, F8, FP1
+   ```
+   ```
+   quickplot.run_status                       = failed
+   quickplot.run_failure_error.error_category = invalid_input
+   quickplot.run_failure_error.error_code     = unknown_channel
+   quickplot.run_failure_error.source_stage   = reader
+   quickplot.run_failure_error.user_message   = Channel 'ZZ' is not in the file. Available channels: F7, F8, FP1
+   quickplot.run_failure_error.user_next_step = Check the plot settings (channel, time window, units) and try again.
+   quickplot.run_failure_error.error_facts    = {"available_channels": ["F7", "F8", "FP1"], "channel": "ZZ"}
+   ```
+
+Total: a few seconds, and the template's own sentence reaches the run record.
+
+### Route B — fall back: the compute node is missing a library
+
+Same request, correct channel, but the EFS layer lacks `pyedflib`.
+
+1. **Step 2, `load_signal()`** — `import pyedflib` inside the reader raises a
+   plain `ImportError`. Nobody in our code raised it, so it is not yet a
+   `PlotError`.
+2. **`render()`** — passes it up.
+3. **`try_canned_template()`** — catches it. `wrap_unexpected_exception()`
+   turns the `ImportError` into
+   `PlotEnvironmentError(MISSING_DEPENDENCY, "The compute node is missing a
+   dependency the plot needs (pyedflib).")`. It had no stage, so the catch
+   site stamps `source_stage = template`. Returns `CannedOutcome(error=…)`.
+4. **`run()`** — `environment` is *not* in `FAIL_FAST`: the user cannot fix a
+   missing library, but the agent, which runs its scripts in a subprocess,
+   may still manage. The error is kept as `report.fallback_trigger_error` and
+   the agent loop runs with the user's `PROMPT`.
+5. **Agent succeeds** — `run()` notes `figure_generated_by = "agent"` and
+   returns normally; `main()` marks the run `succeeded`. The report still
+   carries the reason the canned plot did not happen:
+
+   ```
+   quickplot.run_status                            = succeeded
+   quickplot.figure_generated_by                   = agent
+   quickplot.fallback_trigger_error.error_category = environment
+   quickplot.fallback_trigger_error.error_code     = missing_dependency
+   quickplot.fallback_trigger_error.source_stage   = template
+   quickplot.fallback_trigger_error.user_message   = The compute node is missing a dependency the plot needs (pyedflib).
+   ```
+
+   Had the agent failed too, `run()` would raise
+   `PlotInternalError(AGENT_FAILED, …)` and the run would end as in Route A,
+   step 5, with both `run_failure_error.*` and `fallback_trigger_error.*` on
+   the record.
+
+Without `EXECUTION_RUN_ID` (a local run, a unit test) nothing is pushed; the
+log line is the report.
 
 ## Run it locally
 
