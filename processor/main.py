@@ -12,8 +12,11 @@ Two render paths share this single processor:
      a known identifier (e.g. `fcs_channel_histograms`), the processor
      calls the matching template's render() function. No LLM, ~5s.
 
-  2. **LLM agent loop** (flexible, expensive). Falls back when TEMPLATE
-     is unset, unknown, or the canned render raised. Uses bash /
+  2. **LLM agent loop** (flexible, expensive). Runs when TEMPLATE is
+     unset, or when the canned render failed for a reason the user can't
+     fix (environment / internal — see FAIL_FAST below). Template failures
+     the user can act on (invalid_input, data_unavailable, resource_limit)
+     stop the run with the template's own message instead. Uses bash /
      read_file / write_file tools via the LLM Governor to inspect the
      file and write matplotlib code. ~30s, ~$0.15-0.19.
 
@@ -41,6 +44,21 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
+
+from processor.errors import (
+    GENERIC_INTERNAL_MESSAGE,
+    PlotDataUnavailableError,
+    PlotEnvironmentError,
+    PlotError,
+    PlotErrorCategory,
+    PlotErrorCode,
+    PlotErrorStage,
+    PlotInternalError,
+    PlotInvalidInputError,
+    wrap_unexpected_exception,
+)
+from processor.report import PlotRunReport, push_report_to_workflow_service
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +69,17 @@ logging.basicConfig(
 log = logging.getLogger("quick-plot")
 
 FIGURE_FILENAME = "figure.png"
+
+# The gate's policy: when the canned template fails with
+# one of these categories, stop and show the template's own message. The
+# user can act on it (fix the request, pick other data, ask for less), and
+# a ~30 s / ~$0.15 agent detour would only hide it. environment / internal
+# failures fall back to the agent, which may still rescue the request.
+FAIL_FAST = frozenset({
+    PlotErrorCategory.INVALID_INPUT,
+    PlotErrorCategory.DATA_UNAVAILABLE,
+    PlotErrorCategory.RESOURCE_LIMIT,
+})
 
 # When set to "1", bypass the LLM entirely and use the built-in stub script
 # in processor/stub_script.py. Used for smoke-tests of the EFS layer mount +
@@ -85,39 +114,52 @@ def resolve_target_file(input_dir: str, hint: str) -> str:
         log.warning("TARGET_FILE_NAME=%s not found in INPUT_DIR; falling back to first file", hint)
 
     if not os.path.isdir(input_dir):
-        raise FileNotFoundError(f"INPUT_DIR does not exist: {input_dir}")
+        # The provisioner stages the input dir; its absence is a platform problem.
+        raise PlotEnvironmentError(
+            PlotErrorCode.CONFIG_MISSING_DIRS, f"INPUT_DIR does not exist: {input_dir}",
+            source_stage=PlotErrorStage.CONFIG)
 
     entries = sorted(
         os.path.join(input_dir, e) for e in os.listdir(input_dir)
         if os.path.isfile(os.path.join(input_dir, e)) or os.path.islink(os.path.join(input_dir, e))
     )
     if not entries:
-        raise FileNotFoundError(f"No files in INPUT_DIR: {input_dir}")
+        raise PlotDataUnavailableError(
+            PlotErrorCode.NO_INPUT_FILES, "No input file was staged for this run.",
+            error_facts={"input_dir": input_dir}, source_stage=PlotErrorStage.CONFIG)
     return entries[0]
 
 
-def try_canned_template(config: dict, target_file_path: str, output_path: str) -> bool:
+@dataclass
+class CannedOutcome:
+    """What try_canned_template() came back with.
+
+    produced   figure.png exists and is non-empty
+    error      why not (None when produced, or when no TEMPLATE was asked for)
+    """
+
+    produced: bool = False
+    error: PlotError | None = None
+
+
+def try_canned_template(config: dict, target_file_path: str, output_path: str) -> CannedOutcome:
     """
     Run the canned template named in config["template"], if any.
 
-    Returns True when a template was selected AND it produced figure.png.
-    Returns False when:
-      - TEMPLATE wasn't set (caller didn't ask for a template),
-      - TEMPLATE was set to an unknown name (caller asked for a template
-        we don't have),
-      - TEMPLATE's render() raised (caller asked for one we have but it
-        broke on this file).
+    Returns CannedOutcome(produced=True) when a template was selected AND it
+    produced figure.png. Otherwise `error` says why, as a PlotError, and
+    the caller (run) decides whether the agent loop gets a turn: FAIL_FAST
+    categories do not fall back — the user gets the template's own message
+    instead of a 30 s detour — everything else does, with the template
+    error recorded on the report as `fallback_trigger_error`.
 
-    All "no canned figure" outcomes are reported via False rather than an
-    exception — the caller's contract is to fall through to the agent
-    loop on any of them. Exceptions are logged loudly for CloudWatch
-    discoverability. Any partial figure.png left behind by a failing
-    render is cleaned up so the data-target stage doesn't see a
-    half-baked file.
+    TEMPLATE unset → CannedOutcome() with no error: the caller didn't ask
+    for a template. Any partial figure.png left behind by a failing render
+    is removed so the data-target stage doesn't see a half-baked file.
     """
     template_name = config["template"]
     if not template_name:
-        return False
+        return CannedOutcome()
 
     # Put the EFS layer's site-packages on sys.path so the template's
     # imports (fcsparser, matplotlib, etc.) resolve. The agent loop
@@ -130,11 +172,12 @@ def try_canned_template(config: dict, target_file_path: str, output_path: str) -
 
     template = get_template(template_name)
     if template is None:
-        log.warning(
-            "Unknown template %r. Known templates: %s. Falling back to agent loop.",
-            template_name, ", ".join(known_names()),
-        )
-        return False
+        return CannedOutcome(error=PlotInvalidInputError(
+            PlotErrorCode.UNKNOWN_TEMPLATE,
+            f"Unknown plot template {template_name!r}. Known templates: {', '.join(known_names())}.",
+            error_facts={"known_templates": list(known_names())},
+            source_stage=PlotErrorStage.TEMPLATE,
+        ))
 
     log.info("Trying canned template: %s", template.NAME)
     ext = os.path.splitext(target_file_path)[1].lower()
@@ -147,51 +190,51 @@ def try_canned_template(config: dict, target_file_path: str, output_path: str) -
     # Per-template render args arrive as a JSON object string (TEMPLATE_ARGS,
     # set by MCP's plot_file from its `template_args` param). Templates that
     # take no extra args get an empty dict and render(path, out) as before.
-    # A malformed or non-object blob is a soft failure -> agent fallback, the
-    # same contract as a render() that raises.
     render_kwargs = {}
     template_args = config.get("template_args", "")
     if template_args:
         try:
             parsed = json.loads(template_args)
         except (ValueError, TypeError) as exc:
-            log.warning(
-                "template_args for %r is not valid JSON (%s) — falling back to agent loop.",
-                template_name, exc,
-            )
-            return False
+            return CannedOutcome(error=PlotInvalidInputError(
+                PlotErrorCode.TEMPLATE_ARGS_INVALID_JSON,
+                f"The settings for template {template_name!r} are not valid JSON: {exc}",
+                source_stage=PlotErrorStage.TEMPLATE,
+            ))
         if not isinstance(parsed, dict):
-            log.warning(
-                "template_args for %r must be a JSON object, got %s — falling back to agent loop.",
-                template_name, type(parsed).__name__,
-            )
-            return False
+            return CannedOutcome(error=PlotInvalidInputError(
+                PlotErrorCode.TEMPLATE_ARGS_NOT_OBJECT,
+                f"The settings for template {template_name!r} must be a JSON object, "
+                f"got {type(parsed).__name__}.",
+                source_stage=PlotErrorStage.TEMPLATE,
+            ))
         render_kwargs = parsed
 
     try:
         template.render(target_file_path, output_path, **render_kwargs)
     except Exception as exc:  # noqa: BLE001
-        log.exception(
-            "Template %s raised during render: %s — falling back to agent loop.",
-            template.NAME, exc,
-        )
+        err = wrap_unexpected_exception(exc)      # first of the two catch sites
+        err.source_stage = err.source_stage or PlotErrorStage.TEMPLATE
+        log.warning("Template %s raised during render [%s/%s]: %s",
+                    template.NAME, err.error_category.value, err.error_code.value, exc,
+                    exc_info=True)
         if os.path.isfile(output_path):
             try:
                 os.remove(output_path)
             except OSError:
                 pass
-        return False
+        return CannedOutcome(error=err)
 
     if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
-        return True
+        return CannedOutcome(produced=True)
 
-    # render() didn't raise but also didn't write anything — treat the
-    # same as a soft failure; agent fallback.
-    log.warning(
-        "Template %s completed without writing %s — falling back to agent loop.",
-        template.NAME, output_path,
-    )
-    return False
+    # render() didn't raise but also didn't write anything — an internal
+    # template bug; the agent may still rescue the request.
+    return CannedOutcome(error=PlotInternalError(
+        PlotErrorCode.TEMPLATE_NO_OUTPUT,
+        f"The {template.NAME} template finished without producing a figure.",
+        source_stage=PlotErrorStage.TEMPLATE,
+    ))
 
 
 def setup_layer_python_path() -> None:
@@ -217,9 +260,16 @@ def setup_layer_python_path() -> None:
         log.info("Added layer site-packages to sys.path: %s", sp)
 
 
-def run():
+def run(report: PlotRunReport | None = None):
+    """Produce OUTPUT_DIR/figure.png or raise PlotError.
+
+    `report` is filled in as the run progresses (which route drew the
+    figure, its size); main() owns pushing it out.
+    """
+    report = report if report is not None else PlotRunReport()
     start = time.time()
     config = get_config()
+    report.requested_template = config["template"]
 
     log.info("=" * 60)
     log.info("Quick-plot processor")
@@ -228,16 +278,18 @@ def run():
     log.info("Template: %s", config["template"] or "(unset — agent path)")
     log.info("=" * 60)
 
-    # Validate config
+    # Validate config. Both are platform problems, not user ones: the
+    # provisioner sets the dirs; MCP's plot_file guarantees template/prompt.
     if not config["input_dir"] or not config["output_dir"]:
-        log.error("INPUT_DIR and OUTPUT_DIR are required")
-        sys.exit(1)
+        raise PlotEnvironmentError(
+            PlotErrorCode.CONFIG_MISSING_DIRS,
+            "The plot runner was started without INPUT_DIR/OUTPUT_DIR.",
+            source_stage=PlotErrorStage.CONFIG)
     if not config["template"] and not config["prompt"] and not STUB_MODE:
-        log.error(
-            "At least one of TEMPLATE or PROMPT is required — TEMPLATE picks "
-            "a canned per-format script, PROMPT drives the LLM agent loop."
-        )
-        sys.exit(1)
+        raise PlotInvalidInputError(
+            PlotErrorCode.CONFIG_NO_REQUEST,
+            "Nothing to plot: neither a template nor a prompt was given.",
+            source_stage=PlotErrorStage.CONFIG)
 
     os.makedirs(config["output_dir"], exist_ok=True)
 
@@ -249,24 +301,46 @@ def run():
     log.info("Figure → %s", output_path)
 
     # Path 1: try the canned template first if one was requested.
-    if try_canned_template(config, target_file_path, output_path):
+    canned = try_canned_template(config, target_file_path, output_path)
+    if canned.produced:
         size = os.path.getsize(output_path)
         log.info(
             "Figure produced by canned template '%s': %s (%d bytes, %.2fs total)",
             config["template"], output_path, size, time.time() - start,
         )
+        report.figure_generated_by, report.figure_bytes = "template", size
         return
+
+    # The gate. A template failure the *user* can fix —
+    # wrong channel, window outside the recording, bad settings — stops
+    # here with the template's own message. Spending ~30 s / ~$0.15 on the
+    # agent would only hide that message behind a different plot, or a
+    # second failure for an unrelated reason.
+    if canned.error is not None:
+        if canned.error.error_category in FAIL_FAST:
+            raise canned.error
+        # environment / internal: the agent may still rescue the request.
+        # Keep the reason so the user learns why the canned plot didn't
+        # happen even when the agent succeeds.
+        report.fallback_trigger_error = canned.error
+        log.warning("Template failed [%s/%s]; falling back to agent loop.",
+                    canned.error.error_category.value, canned.error.error_code.value)
 
     # Path 2: agent loop fallback. Requires PROMPT. When a TEMPLATE was
     # selected but failed, MCP synthesizes a generic prompt so the agent
     # has something to act on; pure-template invocations without a prompt
     # caught at the validate-config step above.
     if not config["prompt"] and not STUB_MODE:
-        log.error(
-            "Canned template didn't produce a figure and no PROMPT was provided — "
-            "nothing for the agent to do."
-        )
-        sys.exit(1)
+        if canned.error is not None:
+            # The real reason beats "no prompt". No fallback was attempted,
+            # so it is the run's failure, not a fallback trigger.
+            report.fallback_trigger_error = None
+            raise canned.error
+        raise PlotInvalidInputError(
+            PlotErrorCode.TEMPLATE_FAILED_NO_PROMPT,
+            f"The '{config['template']}' template could not produce a figure "
+            "and no prompt was given for the agent to try instead.",
+            source_stage=PlotErrorStage.TEMPLATE)
 
     # Stub mode short-circuits the agent loop. Used to smoke-test the
     # EFS-layer mount + viewer-asset attachment without the LLM in the loop.
@@ -282,9 +356,12 @@ def run():
                 "Figure produced: %s (%d bytes, %.2fs total)",
                 output_path, result.output_size, time.time() - start,
             )
+            report.figure_generated_by, report.figure_bytes = "stub", result.output_size
             return
-        log.error("Stub script failed:\n%s", result.stderr)
-        sys.exit(1)
+        raise PlotInternalError(
+            PlotErrorCode.STUB_FAILED, "The stub plot script failed.",
+            error_facts={"stderr_tail": (result.stderr or "")[-500:]},
+            source_stage=PlotErrorStage.STUB)
 
     # Agent loop — inspect + plot via tool calls.
     from processor.agent import run_agent
@@ -312,14 +389,68 @@ def run():
         )
         if result.final_text:
             log.info("Agent summary: %s", result.final_text)
+        report.figure_generated_by, report.figure_bytes = "agent", result.output_size
         return
 
+    raise PlotInternalError(
+        PlotErrorCode.AGENT_FAILED,
+        "The plot agent could not produce a figure for this request.",
+        error_facts={"iterations": result.iterations,
+                     "agent_error": (result.error or "")[:500]},
+        source_stage=PlotErrorStage.AGENT)
+
+
+def main() -> int:
+    """Single choke point for every failure. Returns the process exit code.
+
+    `run()` raises a PlotError subclass for the failures it recognises;
+    anything else that escapes is wrapped here. Either way the category,
+    code and user message are logged once, in one shape, and the process
+    exits 1. The report is pushed to workflow-service from the `finally`
+    on every path, success included.
+    """
+    started = time.time()
+    report = PlotRunReport(run_id=os.environ.get("EXECUTION_RUN_ID", ""))
+    code = 0                      # assume success until a failure is caught
+    try:
+        run(report)               # run() fills the report as it goes
+        report.run_status = "succeeded"
+    # Known failure: run() raised a PlotError for something it recognises
+    except PlotError as err:
+        err.source_stage = err.source_stage or PlotErrorStage.RUN
+        report.run_failure_error = err
+        code = 1
+    # Unknown failure: anything else that escaped run(). Second catch site.
+    except Exception as exc:  # noqa: BLE001
+        err = wrap_unexpected_exception(exc)
+        err.source_stage = err.source_stage or PlotErrorStage.RUN
+        log.exception("Unexpected exception escaped run(): %s", exc)
+        report.run_failure_error = err
+        code = 1
+    finally:
+        # Reaches here when something other than Exception got out of run()
+        # (SystemExit, KeyboardInterrupt) or when a handler above raised.
+        # The report is still "failed" and no error was recorded, so give it
+        # a generic one; the real traceback is in the log.
+        if report.run_status != "succeeded" and report.run_failure_error is None:
+            report.run_failure_error = PlotInternalError(
+                PlotErrorCode.ABORTED, GENERIC_INTERNAL_MESSAGE, source_stage=PlotErrorStage.RUN)
+        if report.run_failure_error is not None:
+            _log_failure(report.run_failure_error)
+        report.run_duration_seconds = time.time() - started
+        # Push the report to workflow-service (no-op off the platform)
+        push_report_to_workflow_service(report)
+    return code
+
+
+def _log_failure(err: PlotError) -> None:
     log.error(
-        "Agent loop failed after %d iterations: %s",
-        result.iterations, result.error or "(no error message)",
+        "Quick-plot failed [%s/%s at %s]: %s%s",
+        err.error_category.value, err.error_code.value,
+        err.source_stage.value if err.source_stage else "?", err.user_message,
+        f" (cause: {err.__cause__!r})" if err.__cause__ else "",
     )
-    sys.exit(1)
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(main())

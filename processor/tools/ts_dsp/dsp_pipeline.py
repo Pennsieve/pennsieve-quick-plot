@@ -31,15 +31,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from processor.errors import PlotErrorCode, PlotErrorStage, PlotInvalidInputError
 
-class ToolInputError(RuntimeError):
+
+class ToolInputError(PlotInvalidInputError):
     """A DSP request that is invalid because of the *user's* input — an
     unknown tool, a missing/nonsensical parameter, or an illegal step order.
 
-    Distinct from a generic failure so the caller can choose to surface it to
-    the user rather than silently falling back to the agent loop. Subclasses
-    RuntimeError so existing `except RuntimeError` handlers still catch it.
+    A PlotInvalidInputError (so category invalid_input, stage tool) with a
+    shorter constructor: `ToolInputError("message")` is enough, the code
+    defaults to invalid_tool_argument; pass `code=` for a more specific one.
     """
+
+    def __init__(self, user_message: str, *, code: PlotErrorCode = PlotErrorCode.INVALID_TOOL_ARGUMENT,
+                 error_facts: dict | None = None) -> None:
+        super().__init__(code, user_message, error_facts=error_facts,
+                         source_stage=PlotErrorStage.TOOL)
 
 
 @dataclass(frozen=True)
@@ -92,14 +99,18 @@ def _check_params(spec: ToolSpec, params: dict) -> None:
             hint = f" ({p.description})" if p.description else ""
             unit = f" [{p.unit}]" if p.unit else ""
             raise ToolInputError(
-                f"{spec.name} requires parameter {p.name!r}{unit}{hint}."
+                f"{spec.name} requires parameter {p.name!r}{unit}{hint}.",
+                code=PlotErrorCode.MISSING_ARGUMENT,
+                error_facts={"tool": spec.name, "parameter": p.name},
             )
     unknown = given - allowed
     # did the user pass a parameter this tool does not have?
     if unknown:
         raise ToolInputError(
             f"{spec.name} got unknown parameter(s): {', '.join(sorted(unknown))}. "
-            f"Allowed: {', '.join(sorted(allowed)) or '(none)'}."
+            f"Allowed: {', '.join(sorted(allowed)) or '(none)'}.",
+            code=PlotErrorCode.UNKNOWN_ARGUMENT,
+            error_facts={"tool": spec.name, "unknown": sorted(unknown), "allowed": sorted(allowed)},
         )
 
 
@@ -109,7 +120,9 @@ def _check_domains(spec: ToolSpec, signal) -> None:
         if have != need:
             raise ToolInputError(
                 f"{spec.name} expects {axis}={need!r}, but the signal is "
-                f"{axis}={have!r} at this point in the pipeline."
+                f"{axis}={have!r} at this point in the pipeline.",
+                code=PlotErrorCode.INCOMPATIBLE_PIPELINE,
+                error_facts={"tool": spec.name, "axis": axis, "expected": need, "actual": have},
             )
 
 
@@ -136,20 +149,24 @@ def apply_dsp_pipeline(signal, steps, registry: "dict[str, ToolSpec] | None" = N
         return signal
     if not isinstance(steps, (list, tuple)):
         raise ToolInputError(
-            f"pipeline must be a list of steps; got {type(steps).__name__}."
+            f"pipeline must be a list of steps; got {type(steps).__name__}.",
+            code=PlotErrorCode.INCOMPATIBLE_PIPELINE,
         )
     for i, step in enumerate(steps):
         # 1. shape of the step
         if not isinstance(step, dict) or "tool" not in step:
             raise ToolInputError(
-                f"pipeline step {i} must be an object with a 'tool' name; got {step!r}."
+                f"pipeline step {i} must be an object with a 'tool' name; got {step!r}.",
+                code=PlotErrorCode.INCOMPATIBLE_PIPELINE,
             )
         # 2. known tool?
         spec = registry.get(step["tool"])
         if spec is None:
             raise ToolInputError(
                 f"Unknown processing tool {step['tool']!r}. "
-                f"Available tools: {', '.join(sorted(registry)) or '(none)'}."
+                f"Available tools: {', '.join(sorted(registry)) or '(none)'}.",
+                code=PlotErrorCode.UNKNOWN_TOOL,
+                error_facts={"tool": step["tool"], "available_tools": sorted(registry)},
             )
         # 3. parameters
         params = step.get("params") or {}

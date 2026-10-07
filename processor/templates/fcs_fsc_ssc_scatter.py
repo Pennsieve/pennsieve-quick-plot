@@ -29,6 +29,8 @@ via the EFS layer). No randomness in bin edges or hexbin tessellation.
 
 from __future__ import annotations
 
+from processor.errors import PlotErrorCode, PlotDataUnavailableError
+
 NAME = "fcs_fsc_ssc_scatter"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".fcs",)
 SUMMARY = "FSC vs SSC biaxial; \"what populations are in this file\" (the canonical first-look plot)"
@@ -61,13 +63,14 @@ def render(target_file_path: str, output_path: str) -> None:
     fd = flowio.FlowData(target_file_path)
     events = fd.as_array(preprocess=False)
     if events is None or events.size == 0:
-        raise RuntimeError("FCS file parsed but contained no events")
+        raise PlotDataUnavailableError(PlotErrorCode.EMPTY_DATA, "FCS file parsed but contained no events")
 
     labels = list(fd.pnn_labels)
     fsc_idx = _find_channel(labels, "FSC")
     ssc_idx = _find_channel(labels, "SSC")
     if fsc_idx is None or ssc_idx is None:
-        raise RuntimeError(
+        raise PlotDataUnavailableError(
+            PlotErrorCode.MISSING_REQUIRED_METADATA,
             "FCS file is missing FSC and/or SSC channels — fcs_fsc_ssc_scatter "
             "needs both. Found channels: " + ", ".join(labels)
         )

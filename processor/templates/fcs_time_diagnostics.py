@@ -30,6 +30,8 @@ plot.
 
 from __future__ import annotations
 
+from processor.errors import PlotErrorCode, PlotDataUnavailableError
+
 import math
 
 NAME = "fcs_time_diagnostics"
@@ -60,13 +62,14 @@ def render(target_file_path: str, output_path: str) -> None:
     fd = flowio.FlowData(target_file_path)
     events = fd.as_array(preprocess=False)
     if events is None or events.size == 0:
-        raise RuntimeError("FCS file parsed but contained no events")
+        raise PlotDataUnavailableError(PlotErrorCode.EMPTY_DATA, "FCS file parsed but contained no events")
 
     labels = list(fd.pnn_labels)
     pns_labels = list(fd.pns_labels)
     time_idx = _find_time_channel(labels)
     if time_idx is None:
-        raise RuntimeError(
+        raise PlotDataUnavailableError(
+            PlotErrorCode.MISSING_REQUIRED_METADATA,
             "FCS file has no Time channel — fcs_time_diagnostics needs one. "
             "Channels: " + ", ".join(labels)
         )

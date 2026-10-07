@@ -33,6 +33,8 @@ Some vendor files use ";" instead of "," — we accept either.
 
 from __future__ import annotations
 
+from processor.errors import PlotErrorCode, PlotDataUnavailableError
+
 NAME = "fcs_compensation_heatmap"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".fcs",)
 SUMMARY = "$SPILL matrix heatmap; \"how much spillover between fluorophores\" (panel QC)"
@@ -85,7 +87,8 @@ def render(target_file_path: str, output_path: str) -> None:
     text = fd.text or {}
     spill_raw = text.get("spill") or text.get("spillover")
     if not spill_raw:
-        raise RuntimeError(
+        raise PlotDataUnavailableError(
+            PlotErrorCode.MISSING_REQUIRED_METADATA,
             "FCS file has no $SPILL or $SPILLOVER keyword — no embedded "
             "compensation matrix to visualize."
         )
@@ -94,7 +97,7 @@ def render(target_file_path: str, output_path: str) -> None:
     arr = np.array(matrix, dtype=float)
     n = arr.shape[0]
     if n == 0:
-        raise RuntimeError("$SPILL parsed but contained zero channels")
+        raise PlotDataUnavailableError(PlotErrorCode.EMPTY_DATA, "$SPILL parsed but contained zero channels")
 
     # Heatmap scaling: spillover values are typically 0–1 with diagonal=1.
     # Use a colormap that pops on the off-diagonal — viridis works fine

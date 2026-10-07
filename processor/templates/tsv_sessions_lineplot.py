@@ -33,6 +33,8 @@ broken by session label) so re-renders of the same file are identical.
 ############# SET UP ##################
 from __future__ import annotations
 
+from processor.errors import PlotErrorCode, PlotDataUnavailableError, PlotResourceLimitError
+
 NAME = "tsv_sessions_lineplot"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".tsv",)
 SUMMARY = "subject age across visit sessions as a line plot; \"plot age across sessions\", \"how does age change over sessions\""
@@ -91,7 +93,7 @@ def render(target_file_path: str, output_path: str) -> None:
 ####### LOAD DATA
     df = pd.read_csv(target_file_path, sep="\t", low_memory=False)
     if df.empty:
-        raise RuntimeError("TSV parsed but contained no rows")
+        raise PlotDataUnavailableError(PlotErrorCode.EMPTY_DATA, "TSV parsed but contained no rows")
 
 
 ####### CLEAN DATA
@@ -101,7 +103,8 @@ def render(target_file_path: str, output_path: str) -> None:
         df, prefer=["session_id", "session_name", "session"], contains="session"
     )
     if session_col is None:
-        raise RuntimeError(
+        raise PlotDataUnavailableError(
+            PlotErrorCode.MISSING_REQUIRED_METADATA,
             "No session column found — expected a column named 'session_id', "
             "'session_name', or 'session', or a 'session'-named column whose "
             "values are unique enough to act as the identifier."
@@ -109,7 +112,8 @@ def render(target_file_path: str, output_path: str) -> None:
     # find the age column: find 'subject_age', "session_age", "visit_age", else a unique 'age'-named column.
     age_col = _find_column(df, prefer=["subject_age", "session_age", "visit_age"], contains="age")
     if age_col is None:
-        raise RuntimeError(
+        raise PlotDataUnavailableError(
+            PlotErrorCode.MISSING_REQUIRED_METADATA,
             "No age column found — expected a column whose name contains "
             "'age' (e.g. 'subject_age')."
         )
@@ -122,7 +126,8 @@ def render(target_file_path: str, output_path: str) -> None:
     data = data.dropna(subset=["session", "age"])
     data["session"] = data["session"].astype(str) # needs to dropna first then stringfy 
     if data.empty:
-        raise RuntimeError(
+        raise PlotDataUnavailableError(
+            PlotErrorCode.EMPTY_DATA,
             f"Age column {age_col!r} has no usable numeric values — every "
             "row was missing / NaN / non-numeric."
         )
@@ -130,12 +135,14 @@ def render(target_file_path: str, output_path: str) -> None:
     # Bound the number of plottable sessions. Below MIN there's no line;
     # above MAX the x-axis is an unreadable pile of labels.
     if len(data) < MIN_SESSIONS:
-        raise RuntimeError(
+        raise PlotDataUnavailableError(
+            PlotErrorCode.INSUFFICIENT_SAMPLES,
             f"Only {len(data)} session has a usable age — need at least "
             f"{MIN_SESSIONS} to draw a line plot."
         )
     if len(data) > MAX_SESSIONS:
-        raise RuntimeError(
+        raise PlotResourceLimitError(
+            PlotErrorCode.DATA_TOO_LARGE,
             f"{len(data)} sessions with usable ages exceeds the max of "
             f"{MAX_SESSIONS} — too many for a readable line plot."
         )
