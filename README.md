@@ -40,10 +40,11 @@ In one sentence: the MCP `plot_file` tool turns the user's sentence into a templ
 
 ```
 processor/
-  main.py           # ECS/local entry — try canned, else fall through to agent
-  handler.py        # Lambda handler — event → env vars → main.run()
+  main.py           # ECS/local entry — main() wraps run(): try canned, maybe fall through to agent; builds + pushes the run report
+  handler.py        # Lambda handler — event → env vars → main.main()
   prompt.py         # Agent system prompt + user-message builder
-  llm.py            # Pennsieve LLM Governor wrapper (anthropic SDK + SigV4)
+  errors.py         # PlotError classes, codes and stages; wrap_unexpected_exception()
+  report.py         # PlotRunReport + push_report_to_workflow_service()
   executor.py       # subprocess that runs the agent's generated script with EFS layer on PYTHONPATH
   requirements.txt  # awslambdaric, pennsieve-llm, boto3 (heavy deps live on the EFS layer)
   schema.py         # emits schema/templates.json + schema/ts_tools.json (`make schemas`)
@@ -251,7 +252,47 @@ After a successful run, `OUTPUT_DIR/` contains:
 - `figure.png` — the matplotlib figure (required)
 - Any intermediate scripts / files the agent chose to persist via `write_file` (kept for transparency / debugging; not required)
 
-The `viewer-asset` data-target node downstream picks up `figure.png` and attaches it as a viewer-asset on the target file.
+The `viewer-asset` data-target node downstream picks up `figure.png` and attaches it as a viewer-asset on the target file. It only runs when the processor succeeded, so a failure's "why" cannot travel this way; it goes to the run record instead (below).
+
+### Run report and error reporting
+
+Every failure is one of five `PlotError` subclasses, named by what the user should do next (`processor/errors.py`). They are raised **at the source** — the reader, tool or template that found the problem and still has the facts (the channel asked for, the channels in the file):
+
+| class | `error_category` | next action | example codes |
+|---|---|---|---|
+| `PlotInvalidInputError` | `invalid_input` | fix `template_args` | `unknown_channel`, `invalid_time_window`, `missing_argument`, `unknown_tool`, `unknown_template` |
+| `PlotDataUnavailableError` | `data_unavailable` | pick another file / window | `unreadable_file`, `insufficient_samples`, `empty_data`, `missing_required_metadata` |
+| `PlotResourceLimitError` | `resource_limit` | shrink the request | `window_too_large`, `out_of_memory` |
+| `PlotEnvironmentError` | `environment` | update the compute node | `missing_dependency`, `config_missing_dirs` |
+| `PlotInternalError` | `internal` | report the run ID | `unexpected`, `template_no_output`, `agent_failed`, `aborted` |
+
+Each error carries `error_code` (a `PlotErrorCode`, the exact condition), `user_message`, `user_next_step` (defaults per category), `error_facts` (structured, e.g. `available_channels`) and `source_stage` (`config | reader | tool | template | agent | stub | run`). `PlotError` subclasses `RuntimeError`, so old `except RuntimeError` handlers still work. Anything nobody in this package raised (a library `TypeError`, `MemoryError`, `ImportError`) is given a category by `errors.wrap_unexpected_exception()` at the two catch sites — `try_canned_template()`, which can still fall back to the agent, and `main()`, which can only report; each site fills `source_stage` only when the raise site left it empty.
+
+`main.main()` is the single choke point: it builds a `report.PlotRunReport` on every exit path and `push_report_to_workflow_service()` PUTs it as flat run outputs. The keys mirror the report's field names one-to-one:
+
+```
+PUT {PENNSIEVE_API_HOST2}/compute/workflows/runs/{EXECUTION_RUN_ID}/outputs
+Authorization: Bearer {SESSION_TOKEN}
+{
+  "quickplot.run_status": "failed",                         // succeeded | failed (same words as the run status)
+  "quickplot.requested_template": "edf_processed_timeseries",
+  "quickplot.figure_generated_by": "",                      // template | agent | stub | "" (no figure)
+  "quickplot.figure_bytes": "0",
+  "quickplot.run_duration_seconds": "3.46",
+  "quickplot.run_failure_error.error_category": "invalid_input",
+  "quickplot.run_failure_error.error_code": "unknown_channel",
+  "quickplot.run_failure_error.source_stage": "reader",
+  "quickplot.run_failure_error.user_message": "Channel 'EEG-7' is not in the file. Available channels: F7, F8, FP1",
+  "quickplot.run_failure_error.user_next_step": "Check the plot settings (channel, time window, units) and try again.",
+  "quickplot.run_failure_error.error_facts": "{\"available_channels\": [\"F7\", \"F8\", \"FP1\"], \"channel\": \"EEG-7\"}",
+  "quickplot.reporter.auth": "session_token",               // which token the Lambda used
+  "quickplot.reporter.host": "https://api2.pennsieve.net"
+}
+```
+
+The run record is what `pennsieve-mcp` polls (`GET /runs/{id}`) and what the completion webhook carries to `compute-node-chat`, so both consumers read the report with no new plumbing. `quickplot.fallback_trigger_error.*` (same pockets) appears when a template failed for a non-user reason and the agent drew the figure instead. Off the platform (local runs, no `EXECUTION_RUN_ID`) nothing is pushed; the `Quick-plot failed [category/code at stage]: message` log line is the report.
+
+**Fallback gate** (`main.FAIL_FAST`). `invalid_input`, `data_unavailable` and `resource_limit` template failures stop the run with the template's own message (~4 s): the user can act on them, and a ~30 s agent detour would only hide them. `environment` / `internal` fall back to the agent loop as before, with the reason recorded.
 
 ## EFS layer dependency
 

@@ -34,6 +34,8 @@ the same plot.
 
 from __future__ import annotations
 
+from processor.errors import PlotErrorCode, PlotDataUnavailableError
+
 import math
 
 NAME = "fcs_channel_histograms"
@@ -64,11 +66,11 @@ def render(target_file_path: str, output_path: str) -> None:
     # what's actually in the file, not a derived transformation.
     events = fd.as_array(preprocess=False)
     if events is None or events.size == 0:
-        raise RuntimeError("FCS file parsed but contained no events")
+        raise PlotDataUnavailableError(PlotErrorCode.EMPTY_DATA, "FCS file parsed but contained no events")
 
     channels = list(fd.pnn_labels)
     if not channels:
-        raise RuntimeError("FCS file has no channels to plot")
+        raise PlotDataUnavailableError(PlotErrorCode.EMPTY_DATA, "FCS file has no channels to plot")
 
     if len(events) > MAX_EVENTS_FOR_PLOT:
         # Deterministic subsample — seed from event count so re-renders

@@ -8,6 +8,7 @@ The platform passes these payload keys (subset relevant to quick-plot):
   integrationId         → INTEGRATION_ID
   executionRunId        → EXECUTION_RUN_ID
   sessionToken          → SESSION_TOKEN
+  callbackToken         → CALLBACK_TOKEN   (if the runtime ever forwards it)
   refreshToken          → REFRESH_TOKEN
   llmGovernorFunction   → LLM_GOVERNOR_URL
 
@@ -23,6 +24,7 @@ are set on the Lambda function configuration, not per-invocation.
 
 import logging
 import os
+import sys
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
 log = logging.getLogger("quick-plot")
@@ -36,6 +38,9 @@ _PAYLOAD_TO_ENV = {
     "integrationId": "INTEGRATION_ID",
     "executionRunId": "EXECUTION_RUN_ID",
     "sessionToken": "SESSION_TOKEN",
+    # Not sent by the runtime today; bridged so report.push_report_to_workflow_service can
+    # prefer it the day the platform forwards the per-run callback token.
+    "callbackToken": "CALLBACK_TOKEN",
     "refreshToken": "REFRESH_TOKEN",
     "llmGovernorFunction": "LLM_GOVERNOR_URL",
     "layersDir": "LAYERS_DIR",
@@ -62,9 +67,12 @@ def handler(event, context):
         if isinstance(value, str):
             os.environ[key] = value
 
-    # Run the same logic as ECS mode
-    from processor.main import run
-    run()
+    # Run the same logic as ECS mode. A non-zero code means run() raised a
+    # PlotError (already logged + reported); fail the invocation the same
+    # way the old sys.exit(1) did so Step Functions marks the run FAILED.
+    from processor.main import main
+    if main() != 0:
+        sys.exit(1)
 
     return {
         "status": "success",

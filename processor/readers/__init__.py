@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import os
 
+from processor.errors import PlotDataUnavailableError, PlotErrorCode, PlotErrorStage
+
 from processor.readers import edf_to_signal
 
 MAX_DURATION_S = 600.0
@@ -43,16 +45,23 @@ def load_signal(path: str, params):
 
     `params` is the template's validated RenderParams (channel, channel2,
     window, unit choices). Raises RuntimeError on any problem with the file
-    or with the request once checked against the file's header.
+    or with the request once checked against the file's header (every one
+    a PlotError subclass, so `except RuntimeError` still catches them).
     """
     ext = os.path.splitext(path)[1].lower()
     reader = _READERS.get(ext)
     if reader is None:
-        raise RuntimeError(
-            f"No reader for {ext!r} files. Supported: {', '.join(supported_extensions())}."
+        raise PlotDataUnavailableError(
+            PlotErrorCode.UNSUPPORTED_FILE_FORMAT,
+            f"No reader for {ext!r} files. Supported: {', '.join(supported_extensions())}.",
+            error_facts={"extension": ext, "supported": list(supported_extensions())},
+            source_stage=PlotErrorStage.READER,
         )
     if not os.path.isfile(path):
-        raise RuntimeError(f"Input file does not exist: {path!r}")
+        raise PlotDataUnavailableError(
+            PlotErrorCode.FILE_NOT_FOUND, f"Input file does not exist: {path!r}",
+            error_facts={"file": os.path.basename(path)},
+            source_stage=PlotErrorStage.READER)
     return reader.load_signal(path, params)
 
 

@@ -12,6 +12,8 @@ the file header) and the plot stage (tick labels). Standard library only.
 
 from __future__ import annotations
 
+from processor.errors import PlotErrorCode, PlotInvalidInputError
+
 
 ############# UNIT TABLES ##################
 # Time units -> seconds. Keys are lowercased and stripped of a trailing
@@ -59,7 +61,8 @@ def resolve_time_unit(unit: str | None, *, required: bool) -> tuple[float, str |
     """
     if unit is None or str(unit).strip() == "":
         if required:
-            raise RuntimeError(
+            raise PlotInvalidInputError(
+                PlotErrorCode.MISSING_ARGUMENT,
                 "A time unit is required for numeric start/end/duration "
                 "values — please specify one (us/usec, ms, s/sec, min, h), "
                 "or give the times as H:M:S clock values instead."
@@ -67,9 +70,11 @@ def resolve_time_unit(unit: str | None, *, required: bool) -> tuple[float, str |
         return 1.0, None
     factor = _TIME_TO_S.get(_normalise_unit_key(unit))
     if factor is None:
-        raise RuntimeError(
+        raise PlotInvalidInputError(
+            PlotErrorCode.UNSUPPORTED_UNIT,
             f"Time unit {unit!r} is not a recognised unit of time. "
-            "Use one of: us/usec, ms, s/sec, min, h."
+            "Use one of: us/usec, ms, s/sec, min, h.",
+            error_facts={"unit": str(unit), "supported": ["us", "ms", "s", "min", "h"]},
         )
     return factor, _TIME_SYMBOL[factor]
 
@@ -84,16 +89,19 @@ def resolve_volt_unit(unit: str | None, *, required: bool = True) -> tuple[float
     """
     if unit is None or str(unit).strip() == "":
         if required:
-            raise RuntimeError(
+            raise PlotInvalidInputError(
+                PlotErrorCode.MISSING_ARGUMENT,
                 "A y-axis unit is required — please specify the voltage unit "
                 "the range is in (V, mV, uV, or nV)."
             )
         return 1e-6, "µV"
     factor = _VOLT_TO_V.get(_normalise_unit_key(unit))
     if factor is None:
-        raise RuntimeError(
+        raise PlotInvalidInputError(
+            PlotErrorCode.UNSUPPORTED_UNIT,
             f"y-axis unit {unit!r} is not a recognised unit of voltage. "
-            "Use one of: V, mV, uV, nV."
+            "Use one of: V, mV, uV, nV.",
+            error_facts={"unit": str(unit), "supported": ["V", "mV", "uV", "nV"]},
         )
     return factor, _VOLT_SYMBOL[factor]
 
@@ -108,13 +116,16 @@ def clock_to_seconds(value: str) -> float:
     """'H:M:S' or 'H:M:S.ms' -> seconds since midnight."""
     parts = str(value).strip().split(":")
     if len(parts) != 3:
-        raise RuntimeError(
+        raise PlotInvalidInputError(
+            PlotErrorCode.INVALID_ARGUMENT,
             f"Clock time {value!r} is not in H:M:S format (e.g. '14:07:00')."
         )
     try:
         h, m, s = (float(p) for p in parts)
     except ValueError as exc:
-        raise RuntimeError(f"Clock time {value!r} has non-numeric fields.") from exc
+        raise PlotInvalidInputError(
+            PlotErrorCode.INVALID_ARGUMENT,
+            f"Clock time {value!r} has non-numeric fields.") from exc
     return h * 3600.0 + m * 60.0 + s
 
 

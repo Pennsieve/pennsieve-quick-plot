@@ -30,6 +30,8 @@ the same file produce the same plot.
 
 from __future__ import annotations
 
+from processor.errors import PlotErrorCode, PlotDataUnavailableError
+
 import math
 
 NAME = "csv_column_distributions"
@@ -62,11 +64,12 @@ def render(target_file_path: str, output_path: str) -> None:
     df = pd.read_csv(target_file_path, sep=sep, low_memory=False)
 
     if df.empty:
-        raise RuntimeError("CSV parsed but contained no rows")
+        raise PlotDataUnavailableError(PlotErrorCode.EMPTY_DATA, "CSV parsed but contained no rows")
 
     numeric = df.select_dtypes(include="number")
     if numeric.empty:
-        raise RuntimeError(
+        raise PlotDataUnavailableError(
+            PlotErrorCode.EMPTY_DATA,
             "CSV has no numeric columns to histogram — every column was "
             "string / categorical. Ask the user to refine via a custom prompt."
         )
