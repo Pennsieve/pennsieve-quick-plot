@@ -9,6 +9,8 @@ the channels, and building the Signal. It never decides how the figure looks.
 One module per file format, named by what it converts:
 
   edf_to_signal.py   EDF / EDF+ via pyedflib
+  nwb_to_signal.py   NWB (an ElectricalSeries) via h5py — what
+                     processor-plot-prep writes from a MEF 2.0 recording
 
 plus the rules every reader shares:
 
@@ -26,11 +28,12 @@ import os
 
 from processor.errors import PlotDataUnavailableError, PlotErrorCode, PlotErrorStage
 
-from processor.readers import edf_to_signal
+from processor.readers import edf_to_signal, nwb_to_signal
 from processor.readers.window import MAX_DURATION_S, MIN_SAMPLES
 
 _READERS = {
     ".edf": edf_to_signal,
+    ".nwb": nwb_to_signal,
 }
 
 
