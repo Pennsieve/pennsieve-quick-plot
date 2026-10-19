@@ -8,10 +8,10 @@ in four steps, each its own function:
   _read_header            open the file once, metadata only (no samples)
   _check_against_header   everything about the request that can only be
                           checked with the header in hand: channels exist,
-                          montage channels share a sampling rate, clock and
-                          date times resolved against the recording start,
-                          window inside the recording and within the clip
-                          limits, voltage unit (user's or the header's)
+                          montage channels share a sampling rate, the window
+                          (resolved and bounded by readers/window.py, the
+                          rules every reader shares), voltage unit (user's
+                          or the header's)
   _read_channels          read the window for the channel (and channel2),
                           montage = channel - channel2, in volts
   _build_signal           convert to display voltage, package as a Signal
@@ -37,9 +37,9 @@ from processor.errors import (
     PlotErrorCode,
     PlotErrorStage,
     PlotInvalidInputError,
-    PlotResourceLimitError,
 )
-from processor.tools.ts_dsp import Signal, resolve_time_point, resolve_volt_unit
+from processor.readers.window import resolve_window
+from processor.tools.ts_dsp import Signal, resolve_volt_unit
 
 
 ############# HEADER ##################
@@ -100,8 +100,6 @@ class _Window:
 
 
 def _check_against_header(params, header: _Header) -> _Window:
-    from processor.readers import MAX_DURATION_S, MIN_SAMPLES
-
     # Channels exist (case-insensitive); montage channels share a rate.
     channel = header.index(params.channel)
     channel2 = header.index(params.channel2) if params.montage else None
@@ -119,53 +117,10 @@ def _check_against_header(params, header: _Header) -> _Window:
     # The window must fit within BOTH channels -> validate against the shorter.
     recording_s = min(header.duration_s[c] for c in (channel, channel2) if c is not None)
 
-    # Window, in seconds from the recording start. Clock and date inputs are
-    # anchored to the header's start timestamp by the shared ts_dsp rule.
-    start_s = resolve_time_point(params.start, header.start, field="start time")
-    end_s = resolve_time_point(params.end, header.start, field="end time") if params.end else None
-    if end_s is not None and params.duration_s is not None:
-        implied_end = start_s + params.duration_s
-        if abs(implied_end - end_s) > 1e-6:
-            raise _bad_window(
-                f"end time and duration disagree: end implies {end_s:g}s but "
-                f"start+duration implies {implied_end:g}s. Provide one.",
-                start_s=start_s, end_s=end_s, recording_s=recording_s)
-    if end_s is None:
-        end_s = start_s + params.duration_s
-    if start_s < 0:
-        raise _bad_window(f"start time ({start_s:g}s) is before the recording start.",
-                          start_s=start_s, end_s=end_s, recording_s=recording_s)
-    if start_s >= recording_s:
-        raise _bad_window(
-            f"start time ({start_s:g}s) is at or past the end of the recording "
-            f"({recording_s:g}s).",
-            start_s=start_s, end_s=end_s, recording_s=recording_s)
-    if end_s <= start_s:
-        raise _bad_window(
-            f"end time ({end_s:g}s) is not after the start time ({start_s:g}s).",
-            start_s=start_s, end_s=end_s, recording_s=recording_s)
-    if end_s > recording_s:
-        raise _bad_window(
-            f"end time ({end_s:g}s) is past the end of the recording ({recording_s:g}s).",
-            start_s=start_s, end_s=end_s, recording_s=recording_s)
-    if (end_s - start_s) > MAX_DURATION_S:
-        # The request is well-formed and the data exists; it is just more
-        # than one plot is allowed to pull. Ask for less.
-        raise PlotResourceLimitError(
-            PlotErrorCode.WINDOW_TOO_LARGE,
-            f"window is {end_s - start_s:g}s long, over the {MAX_DURATION_S:g}s maximum.",
-            error_facts={"window_s": end_s - start_s, "max_window_s": MAX_DURATION_S},
-            source_stage=PlotErrorStage.READER,
-        )
-    expected_samples = int(round((end_s - start_s) * fs))
-    if expected_samples < MIN_SAMPLES:
-        raise PlotDataUnavailableError(
-            PlotErrorCode.INSUFFICIENT_SAMPLES,
-            f"window spans only {expected_samples} sample(s) at {fs:g} Hz — "
-            f"need at least {MIN_SAMPLES}. Widen the window.",
-            error_facts={"samples": expected_samples, "min_samples": MIN_SAMPLES, "fs": fs},
-            source_stage=PlotErrorStage.READER,
-        )
+    # Window, in seconds from the recording start: the rules shared by every
+    # reader (clock/date anchoring, bounds, clip limits).
+    start_s, end_s = resolve_window(params, recording_start=header.start,
+                                    recording_s=recording_s, fs=fs)
 
     # Display voltage unit: the user's if given, else the header's for the
     # primary channel (a blank declaration falls back to µV; an unrecognisable
@@ -176,16 +131,6 @@ def _check_against_header(params, header: _Header) -> _Window:
         volt_factor, volt_symbol = _header_volt_unit(channel, header)
 
     return _Window(channel, channel2, start_s, end_s, fs, volt_factor, volt_symbol)
-
-
-def _bad_window(message: str, *, start_s: float, end_s, recording_s: float) -> PlotInvalidInputError:
-    """All window-vs-recording complaints share one code and the same facts,
-    so the chat agent can propose a window that fits."""
-    return PlotInvalidInputError(
-        PlotErrorCode.INVALID_TIME_WINDOW, message,
-        error_facts={"start_s": start_s, "end_s": end_s, "recording_s": recording_s},
-        source_stage=PlotErrorStage.READER,
-    )
 
 
 def _header_volt_unit(channel: str, header: _Header) -> tuple[float, str]:

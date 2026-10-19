@@ -10,14 +10,14 @@ One module per file format, named by what it converts:
 
   edf_to_signal.py   EDF / EDF+ via pyedflib
 
+plus the rules every reader shares:
+
+  window.py          the request's window resolved against the recording
+                     (clock/date anchoring, bounds, the clip limits
+                     MAX_DURATION_S and MIN_SAMPLES)
+
 `load_signal()` below is the only entry point templates call; it picks the
 module by file extension.
-
-Clip limits shared by every reader:
-  MAX_DURATION_S  longest window we will read (a longer raw trace is both
-                  slow to draw and unreadable at screen resolution)
-  MIN_SAMPLES     fewest samples worth plotting (a handful of samples is a
-                  dot cloud, not a signal)
 """
 
 from __future__ import annotations
@@ -27,9 +27,7 @@ import os
 from processor.errors import PlotDataUnavailableError, PlotErrorCode, PlotErrorStage
 
 from processor.readers import edf_to_signal
-
-MAX_DURATION_S = 600.0
-MIN_SAMPLES = 16
+from processor.readers.window import MAX_DURATION_S, MIN_SAMPLES
 
 _READERS = {
     ".edf": edf_to_signal,
