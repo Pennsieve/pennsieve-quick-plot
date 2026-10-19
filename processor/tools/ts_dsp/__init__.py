@@ -6,7 +6,7 @@ plus the shared definitions everything codes against.
 
 Layout:
   signal_definition.py  the Signal dataclass + domain vocabulary
-  units.py              time/voltage unit tables, H:M:S helpers
+  units.py              time/voltage unit tables, H:M:S helpers, time-point rules
   dsp_pipeline.py       the @dsp_tool contract + apply_dsp_pipeline runner
   filters.py            frequency-selective filters (highpass, lowpass, …)
   smoothing.py          domain-agnostic smoothers (moving_average, …)
@@ -26,10 +26,15 @@ from __future__ import annotations
 # Shared definitions.
 from .signal_definition import Signal, X_DOMAINS, Y_DOMAINS  # noqa: F401
 from .units import (  # noqa: F401
+    TimePoint,
+    clock_name,
+    clock_to_seconds,
+    is_clock_string,
+    parse_time_point,
+    resolve_time_point,
     resolve_time_unit,
     resolve_volt_unit,
-    is_clock_string,
-    clock_to_seconds,
+    seconds_since_midnight,
     seconds_to_clock,
 )
 from .dsp_pipeline import ToolInputError, ToolSpec, apply_dsp_pipeline  # noqa: F401
@@ -73,7 +78,9 @@ __all__ = [
     # definitions
     "Signal", "X_DOMAINS", "Y_DOMAINS",
     "resolve_time_unit", "resolve_volt_unit",
+    "TimePoint", "parse_time_point", "resolve_time_point",
     "is_clock_string", "clock_to_seconds", "seconds_to_clock",
+    "seconds_since_midnight", "clock_name",
     # pipeline
     "ToolInputError", "apply_dsp_pipeline",
     # registry

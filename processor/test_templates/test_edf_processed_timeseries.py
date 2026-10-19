@@ -39,7 +39,7 @@ import pyedflib
 import pytest
 import matplotlib.axes
 from processor.templates import edf_processed_timeseries as template
-from processor.tools.ts_dsp import resolve_time_unit
+from processor.tools.ts_dsp import TimePoint, resolve_time_unit
 
 # Anchor clock for the synthetic recording (matches how a real EDF carries a
 # start-of-day time); clock-string window inputs resolve against this.
@@ -135,16 +135,25 @@ def _parse(**overrides):
 
 def test_parse_numeric_times_become_seconds():
     p = _parse(start_time=500, duration=50, time_unit="ms")
-    assert p.start == template.TimePoint(0.5, is_clock=False)
+    assert p.start == TimePoint("relative", 0.5)
     assert p.duration_s == pytest.approx(0.05)
     assert (p.time_factor, p.time_symbol, p.clock_mode) == (1e-3, "ms", False)
 
 
 def test_parse_clock_times_become_seconds_since_midnight():
     p = _parse(start_time="13:12:36", end_time="13:12:38", duration=None, time_unit=None)
-    assert p.start == template.TimePoint(13 * 3600 + 12 * 60 + 36, is_clock=True)
+    assert p.start == TimePoint("clock", 13 * 3600 + 12 * 60 + 36)
     assert p.end.is_clock and p.clock_mode
     assert p.time_factor == 1.0          # no numeric time -> no unit needed
+
+
+def test_parse_date_times_keep_the_full_moment():
+    # The third form: a date and time, kept whole for the reader to anchor.
+    p = _parse(start_time="2020-09-24 13:12:36", end_time="2020-09-25T00:00:02.5",
+               duration=None, time_unit=None)
+    assert p.start == TimePoint("datetime", at=datetime(2020, 9, 24, 13, 12, 36))
+    assert p.end.at == datetime(2020, 9, 25, 0, 0, 2, 500000)
+    assert p.clock_mode                  # drawn with H:M:S ticks like a clock time
 
 
 def test_parse_montage_flag_and_display_settings():
@@ -165,6 +174,8 @@ def test_parse_rejects_uninterpretable_values():
         _parse(y_unit="furlongs")
     with pytest.raises(RuntimeError):          # malformed clock string
         _parse(start_time="13:12", duration=None, time_unit=None)
+    with pytest.raises(RuntimeError):          # malformed date
+        _parse(start_time="2020-13-40 13:12:36", duration=None, time_unit=None)
     with pytest.raises(RuntimeError):          # y_range shape
         _parse(y_range=[1, 2, 3])
 
@@ -207,6 +218,18 @@ def test_render_writes_a_png_from_clock_window(tmp_path):
     template.render(src, str(out), channel="F7",
                     start_time="13:12:36", end_time="13:12:38",
                     y_range=100, y_unit="uV")  # no time_unit on purpose
+
+    assert out.read_bytes().startswith(b"\x89PNG")
+
+
+def test_render_writes_a_png_from_date_window(tmp_path):
+    # Full date-and-time inputs resolve against the recording's start date.
+    src = _write_edf(tmp_path / "rec.edf")
+    out = tmp_path / "figure.png"
+
+    template.render(src, str(out), channel="F7",
+                    start_time="2020-09-24 13:12:36", end_time="2020-09-24 13:12:38",
+                    y_range=100, y_unit="uV")
 
     assert out.read_bytes().startswith(b"\x89PNG")
 
@@ -522,7 +545,22 @@ def test_render_x_label_follows_input_format(monkeypatch, tmp_path):
 
     # canonical microsecond symbol, from the ts_dsp unit vocabulary
     usym = resolve_time_unit("usec", required=True)[1]
-    assert labels == ["time (s)", f"time ({usym})", "time (h:m:s)"]
+    # An EDF start time is naive, i.e. the recorder's own ("local") clock.
+    assert labels == ["time (s)", f"time ({usym})", "time (h:m:s, local)"]
+
+
+def test_render_clock_axis_names_the_date_only_across_midnight(monkeypatch, tmp_path):
+    # Ticks stay H:M:S; the date appears once, in the label, and only when
+    # the window crosses midnight (so a multi-day MEF window is unambiguous).
+    src = _write_edf(tmp_path / "rec.edf", start=datetime(2020, 9, 24, 23, 59, 55))
+    labels = _spy_first_arg(monkeypatch, "set_xlabel")
+
+    template.render(src, str(tmp_path / "same.png"), channel="F7",
+                    start_time="23:59:56", end_time="23:59:58", y_range=100, y_unit="uV")
+    template.render(src, str(tmp_path / "cross.png"), channel="F7",
+                    start_time="23:59:56", end_time="00:00:02", y_range=100, y_unit="uV")
+
+    assert labels == ["time (h:m:s, local)", "time (h:m:s, local, from 2020-09-24)"]
 
 
 # ---------------------------------------------------------------------------

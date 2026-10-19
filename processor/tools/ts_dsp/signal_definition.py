@@ -14,6 +14,7 @@ imports only the standard library.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 
 ############# DOMAIN VOCABULARY ##################
@@ -57,11 +58,12 @@ class Signal:
     x_unit: str = "s"
     y_domain: str = "amplitude"
     y_unit: str = "µV"
-    # Wall-clock time of the recording's first sample, as seconds since
-    # midnight, or None when the file carries no usable start timestamp.
-    # Filled by the reader; the plot stage uses it to draw H:M:S ticks when
-    # the user gave clock-string times.
-    recording_start_clock_s: "float | None" = None
+    # Wall-clock time of the recording's first sample, or None when the file
+    # carries no usable start timestamp. Naive = the recorder's own clock
+    # (EDF); timezone-aware = that zone (NWB stores UTC). Filled by the
+    # reader; the plot stage uses it to draw H:M:S ticks when the user gave
+    # clock-string times, and to say which clock they are on.
+    recording_start: "datetime | None" = None
 
     def x_label(self) -> str:
         return f"{self.x_domain} ({self.x_unit})"

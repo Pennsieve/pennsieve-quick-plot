@@ -38,17 +38,17 @@
         },
         {
           "name": "start_time",
-          "type": "number or \"HH:MM:SS\" string",
+          "type": "number, \"HH:MM:SS\" or \"YYYY-MM-DD HH:MM:SS\" string",
           "required": true,
           "unit": "",
-          "description": "window start: a number (in `time_unit`) OR a wall-clock \"HH:MM:SS\" string"
+          "description": "window start: a number (in `time_unit`, from the recording start), a wall-clock \"HH:MM:SS\" on the recording's start day, or a full \"YYYY-MM-DD HH:MM:SS\" for multi-day recordings; clock and date values are read on the recording's own clock"
         },
         {
           "name": "end_time",
-          "type": "number or \"HH:MM:SS\" string",
+          "type": "number, \"HH:MM:SS\" or \"YYYY-MM-DD HH:MM:SS\" string",
           "required": false,
           "unit": "",
-          "description": "window end; provide EXACTLY ONE of end_time / duration"
+          "description": "window end, in the same forms as start_time; provide EXACTLY ONE of end_time / duration"
         },
         {
           "name": "duration",
@@ -62,7 +62,7 @@
           "type": "string",
           "required": false,
           "unit": "",
-          "description": "unit for NUMERIC start/end/duration values (us, ms, s, min, h). REQUIRED whenever any of those is a plain number; omit only when all times are \"HH:MM:SS\" clock strings"
+          "description": "unit for NUMERIC start/end/duration values (us, ms, s, min, h). REQUIRED whenever any of those is a plain number; omit only when all times are clock or date strings"
         },
         {
           "name": "y_range",

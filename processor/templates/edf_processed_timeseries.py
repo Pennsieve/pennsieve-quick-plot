@@ -22,15 +22,21 @@ INPUTS (keyword args to render(), i.e. the MCP `template_args`)
 --------------------------------------------------------------------------
 Required:
   channel                 channel/label name, e.g. "F8", "EKG2".
-  start_time              window start. A number (interpreted in
-                          `time_unit`) OR a "HH:MM:SS" clock string.
-  end_time OR duration    at least one. `end_time` is a number (in
-                          `time_unit`) or "HH:MM:SS"; `duration` is a number
-                          in `time_unit`. Both may be given if they agree.
+  start_time              window start, in one of three forms: a number
+                          (interpreted in `time_unit`, from the recording
+                          start); a "HH:MM:SS" clock time on the day the
+                          recording started (the next day if it is earlier
+                          than the start clock); or a full
+                          "YYYY-MM-DD HH:MM:SS" for recordings that run for
+                          days. Clock and date values are read on the
+                          recording's own clock (see ts_dsp/units.py).
+  end_time OR duration    at least one. `end_time` takes the same three forms
+                          as `start_time`; `duration` is a number in
+                          `time_unit`. Both may be given if they agree.
   time_unit               unit for the NUMERIC time inputs (us/ms/s/min/h).
                           Required whenever any of start/end/duration is a
                           plain number; not needed when the times are given
-                          as "HH:MM:SS" clock strings.
+                          as clock or date strings.
 Optional:
   channel2                second channel; the trace is then the bipolar
                           derivation channel - channel2 (e.g. "F7-F8").
@@ -45,9 +51,11 @@ Optional:
   pipeline                ordered list of DSP steps, each {"tool": <name>,
                           "params": {...}}, run via ts_dsp.apply_dsp_pipeline.
 
-The x-axis mirrors the FORMAT the user typed: clock-string inputs render as
-H:M:S wall-clock ticks; numeric inputs render as plain numbers in the given
-unit (no scientific-notation offset).
+The x-axis mirrors the FORMAT the user typed: clock and date inputs render
+as H:M:S wall-clock ticks, with the axis label naming the clock (local or
+UTC) and, only when the window crosses midnight, the date it starts on;
+numeric inputs render as plain numbers in the given unit (no
+scientific-notation offset).
 
 --------------------------------------------------------------------------
 ERRORS (RuntimeError / ts_dsp.ToolInputError; the processor then falls back
@@ -56,10 +64,11 @@ to the agent loop — see processor/main.py::try_canned_template)
 _parse / _validate:  wrong extension; channel or start missing; neither end
                      nor duration; both montage channels the same; time_unit
                      missing for numeric times or not a time unit; y_unit not a
-                     voltage unit; malformed y_range or clock string.
+                     voltage unit; malformed y_range, clock or date string.
 reader:              file unreadable; channel not present; montage channels
                      with different sampling rates; header declares an
-                     unrecognizable voltage unit; window outside the
+                     unrecognizable voltage unit; clock or date time given
+                     but the file has no start timestamp; window outside the
                      recording, over the duration cap, or too few samples;
                      end and duration both given but inconsistent.
 pipeline:            unknown tool; missing/invalid tool parameter; a step
@@ -72,17 +81,20 @@ from processor.errors import PlotErrorCode, PlotDataUnavailableError, PlotInvali
 
 import os
 from dataclasses import dataclass
-from typing import NamedTuple
+from datetime import timedelta
 
 from processor.readers import load_signal, MAX_DURATION_S, MIN_SAMPLES  # noqa: F401 (limits re-exported for docs/tests)
 from processor.templates.contract import TemplateArg
 from processor.tools.ts_dsp import (
     Signal,
+    TimePoint,
     apply_dsp_pipeline,
-    clock_to_seconds,
+    clock_name,
     is_clock_string,
+    parse_time_point,
     resolve_time_unit,
     resolve_volt_unit,
+    seconds_since_midnight,
     seconds_to_clock,
 )
 
@@ -107,19 +119,25 @@ ARGS_SPEC: tuple[TemplateArg, ...] = (
                 description="second channel; when given, the trace is the "
                             "bipolar montage channel-channel2 (e.g. \"F7\"-\"F8\"). "
                             "Both channels must share a sampling rate"),
-    TemplateArg("start_time", "number or \"HH:MM:SS\" string",
-                description="window start: a number (in `time_unit`) OR a "
-                            "wall-clock \"HH:MM:SS\" string"),
-    TemplateArg("end_time", "number or \"HH:MM:SS\" string", required=False,
-                description="window end; provide EXACTLY ONE of end_time / duration"),
+    TemplateArg("start_time", "number, \"HH:MM:SS\" or \"YYYY-MM-DD HH:MM:SS\" string",
+                description="window start: a number (in `time_unit`, from the "
+                            "recording start), a wall-clock \"HH:MM:SS\" on the "
+                            "recording's start day, or a full "
+                            "\"YYYY-MM-DD HH:MM:SS\" for multi-day recordings; "
+                            "clock and date values are read on the recording's "
+                            "own clock"),
+    TemplateArg("end_time", "number, \"HH:MM:SS\" or \"YYYY-MM-DD HH:MM:SS\" string",
+                required=False,
+                description="window end, in the same forms as start_time; "
+                            "provide EXACTLY ONE of end_time / duration"),
     TemplateArg("duration", "number", required=False,
                 description="window length in `time_unit`; provide EXACTLY ONE "
                             "of end_time / duration"),
     TemplateArg("time_unit", "string", required=False,
                 description="unit for NUMERIC start/end/duration values (us, ms, "
                             "s, min, h). REQUIRED whenever any of those is a plain "
-                            "number; omit only when all times are \"HH:MM:SS\" "
-                            "clock strings"),
+                            "number; omit only when all times are clock or date "
+                            "strings"),
     TemplateArg("y_range", "positive number or [min, max] pair", required=False,
                 description="y-axis extent: a single positive number N for a "
                             "symmetric [-N, +N], or an explicit [min, max] pair; "
@@ -156,19 +174,6 @@ _RAW_Y_DOMAIN = "amplitude"
 
 
 ############# PARAMETERS ##################
-class TimePoint(NamedTuple):
-    """One time input after parsing.
-
-    seconds   numeric input -> seconds (already scaled by time_unit);
-              clock input   -> seconds since midnight.
-    is_clock  which of the two `seconds` means. The reader anchors a clock
-              value to the recording's own start time; a numeric value is
-              already relative to the recording start.
-    """
-    seconds: float
-    is_clock: bool
-
-
 @dataclass(frozen=True)
 class RenderParams:
     """render()'s keyword arguments, parsed into typed values.
@@ -179,12 +184,12 @@ class RenderParams:
     channel: "str | None"
     channel2: "str | None"
     montage: bool
-    start: "TimePoint | None"
+    start: "TimePoint | None"     # ts_dsp.TimePoint: relative, clock or date
     end: "TimePoint | None"
     duration_s: "float | None"
     time_factor: float            # numeric time input unit -> seconds
     time_symbol: "str | None"     # canonical display symbol for that unit
-    clock_mode: bool              # start was a clock string -> H:M:S x ticks
+    clock_mode: bool              # start was a clock/date string -> H:M:S x ticks
     y_limits: "tuple[float, float] | None"
     volt: "tuple[float, str] | None"   # (factor-to-volts, symbol) if y_unit given
     pipeline: "list | None"
@@ -195,14 +200,10 @@ def _blank(value) -> bool:
 
 
 def _parse_time(value, time_factor: float, *, field: str) -> "TimePoint | None":
+    """Blank -> None; otherwise the shared ts_dsp rule reads the three forms."""
     if _blank(value):
         return None
-    if is_clock_string(value):
-        return TimePoint(clock_to_seconds(value), is_clock=True)
-    try:
-        return TimePoint(float(value) * time_factor, is_clock=False)
-    except (TypeError, ValueError) as exc:
-        raise PlotInvalidInputError(PlotErrorCode.INVALID_ARGUMENT, f"{field} {value!r} is not a number.") from exc
+    return parse_time_point(value, time_factor, field=field)
 
 
 def _parse_y_range(y_range) -> "tuple[float, float] | None":
@@ -240,8 +241,8 @@ def _parse(*, channel, channel2, start_time, end_time, duration, time_unit,
     """Raw template_args -> RenderParams. Turns strings and numbers into
     typed values; opens no file. Raises only where a value cannot be
     interpreted at all (bad unit spelling, malformed clock string or y_range)."""
-    # A time unit is only needed when a time is a plain number; clock
-    # strings carry their own unit.
+    # A time unit is only needed when a time is a plain number; clock and
+    # date strings carry their own unit.
     has_numeric_time = any(
         not _blank(v) and not is_clock_string(v) for v in (start_time, end_time, duration)
     )
@@ -294,21 +295,35 @@ def _validate(params: RenderParams) -> None:
 _KIND_NOUN: dict[str, str] = {"single_channel": "channel", "montage": "montage"}
 
 
+def _clock_axis_label(signal: Signal) -> str:
+    """'time (h:m:s, <clock>)', plus the window's start date only when the
+    window crosses midnight — ticks stay short; the date appears once."""
+    label = f"time (h:m:s, {clock_name(signal.recording_start)})"
+    if signal.recording_start is None or signal.t.size == 0:
+        return label
+    first = signal.recording_start + timedelta(seconds=float(signal.t[0]))
+    last = signal.recording_start + timedelta(seconds=float(signal.t[-1]))
+    if first.date() != last.date():
+        label = f"time (h:m:s, {clock_name(signal.recording_start)}, from {first.date().isoformat()})"
+    return label
+
+
 def _x_axis(signal: Signal, params: RenderParams):
     """(x values to plot, axis label, tick formatter or None).
 
     The reader always gives time in seconds from the recording start. For a
     time axis we show it the way the user typed it: numeric input -> plain
-    numbers in the user's unit; clock input -> H:M:S wall clock anchored at
-    the recording start. A non-time axis (a spectrum) is shown as-is.
+    numbers in the user's unit; clock or date input -> H:M:S wall clock
+    anchored at the recording start, the label naming the clock. A non-time
+    axis (a spectrum) is shown as-is.
     """
     from matplotlib.ticker import FuncFormatter, ScalarFormatter
 
     if signal.x_domain != "time":
         return signal.t, signal.x_label(), None
     if params.clock_mode:
-        t0 = signal.recording_start_clock_s or 0.0
-        return (signal.t, "time (h:m:s)",
+        t0 = seconds_since_midnight(signal.recording_start) if signal.recording_start else 0.0
+        return (signal.t, _clock_axis_label(signal),
                 FuncFormatter(lambda v, _pos: seconds_to_clock(v + t0)))
     fmt = ScalarFormatter(useOffset=False)
     fmt.set_scientific(False)

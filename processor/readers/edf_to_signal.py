@@ -8,10 +8,10 @@ in four steps, each its own function:
   _read_header            open the file once, metadata only (no samples)
   _check_against_header   everything about the request that can only be
                           checked with the header in hand: channels exist,
-                          montage channels share a sampling rate, clock-string
-                          times resolved against the recording start, window
-                          inside the recording and within the clip limits,
-                          voltage unit (user's or the header's)
+                          montage channels share a sampling rate, clock and
+                          date times resolved against the recording start,
+                          window inside the recording and within the clip
+                          limits, voltage unit (user's or the header's)
   _read_channels          read the window for the channel (and channel2),
                           montage = channel - channel2, in volts
   _build_signal           convert to display voltage, package as a Signal
@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime
 
 from processor.errors import (
     PlotDataUnavailableError,
@@ -38,7 +39,7 @@ from processor.errors import (
     PlotInvalidInputError,
     PlotResourceLimitError,
 )
-from processor.tools.ts_dsp import Signal, resolve_volt_unit
+from processor.tools.ts_dsp import Signal, resolve_time_point, resolve_volt_unit
 
 
 ############# HEADER ##################
@@ -48,7 +49,7 @@ class _Header:
     fs: dict                 # label -> sampling rate (Hz)
     duration_s: dict         # label -> recording length for that channel (s)
     unit: dict               # label -> declared physical dimension, verbatim
-    start_clock_s: "float | None"   # recording start as seconds since midnight
+    start: "datetime | None"  # recording start, on the recorder's own clock (naive)
 
     def index(self, channel: str) -> str:
         """Resolve a user-typed channel name to the file's label
@@ -78,13 +79,12 @@ def _read_header(path: str) -> _Header:
         duration_s = {lab: n_samples[i] / fs[lab] for i, lab in enumerate(labels)}
         unit = {lab: str(reader.getPhysicalDimension(i)) for i, lab in enumerate(labels)}
         try:
-            dt = reader.getStartdatetime()
-            start_clock_s = dt.hour * 3600.0 + dt.minute * 60.0 + dt.second + dt.microsecond / 1e6
+            start = reader.getStartdatetime()
         except Exception:  # noqa: BLE001 — a missing/parse-broken start date is non-fatal
-            start_clock_s = None
+            start = None
     finally:
         reader._close()
-    return _Header(labels, fs, duration_s, unit, start_clock_s)
+    return _Header(labels, fs, duration_s, unit, start)
 
 
 ############# REQUEST vs HEADER ##################
@@ -97,31 +97,6 @@ class _Window:
     fs: float
     volt_factor: float       # display unit -> volts
     volt_symbol: str
-
-
-def _to_seconds_from_start(point, header: _Header, *, field: str) -> float:
-    """A TimePoint from the template -> seconds from the recording start.
-
-    Numeric inputs were already converted to seconds by _parse. Clock inputs
-    are seconds-since-midnight and are anchored to the recording's own
-    start-of-day clock (rolling to the next day if earlier than the start).
-    """
-    if not point.is_clock:
-        return float(point.seconds)
-    if header.start_clock_s is None:
-        # The file lacks something the request needs: a data problem, not a
-        # typo. Numeric times would still work.
-        raise PlotDataUnavailableError(
-            PlotErrorCode.MISSING_REQUIRED_METADATA,
-            f"{field} was given as a clock time but the recording has no "
-            "start timestamp to anchor it to. Give the time in seconds instead.",
-            error_facts={"field": field},
-            source_stage=PlotErrorStage.READER,
-        )
-    offset = float(point.seconds) - header.start_clock_s
-    if offset < 0:
-        offset += 24 * 3600.0
-    return offset
 
 
 def _check_against_header(params, header: _Header) -> _Window:
@@ -144,9 +119,10 @@ def _check_against_header(params, header: _Header) -> _Window:
     # The window must fit within BOTH channels -> validate against the shorter.
     recording_s = min(header.duration_s[c] for c in (channel, channel2) if c is not None)
 
-    # Window, in seconds from the recording start.
-    start_s = _to_seconds_from_start(params.start, header, field="start time")
-    end_s = _to_seconds_from_start(params.end, header, field="end time") if params.end else None
+    # Window, in seconds from the recording start. Clock and date inputs are
+    # anchored to the header's start timestamp by the shared ts_dsp rule.
+    start_s = resolve_time_point(params.start, header.start, field="start time")
+    end_s = resolve_time_point(params.end, header.start, field="end time") if params.end else None
     if end_s is not None and params.duration_s is not None:
         implied_end = start_s + params.duration_s
         if abs(implied_end - end_s) > 1e-6:
@@ -281,7 +257,7 @@ def _build_signal(t_s, y_volts, window: _Window, header: _Header, params) -> Sig
         x_unit="s",
         y_domain="amplitude",
         y_unit=window.volt_symbol,
-        recording_start_clock_s=header.start_clock_s,
+        recording_start=header.start,
     )
 
 

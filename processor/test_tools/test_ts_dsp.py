@@ -19,6 +19,7 @@ pytest processor/test_tools/test_ts_dsp.py
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 
 import numpy as np
 import pytest
@@ -409,13 +410,14 @@ def test_fft_of_constant_is_pure_dc():
     assert np.all(out.y[1:] < 1e-9)                    # no spurious content elsewhere
 
 
-def test_spectrum_keeps_recording_start_clock():
+def test_spectrum_keeps_recording_start():
     # A spectrum has no time axis to anchor, but the metadata about the
     # source recording rides along untouched (dataclasses.replace semantics).
-    sig = replace(_ts(np.ones(256)), recording_start_clock_s=47556.0)
+    start = datetime(2020, 9, 24, 13, 12, 36)
+    sig = replace(_ts(np.ones(256)), recording_start=start)
     out = apply_dsp_pipeline(sig, [{"tool": "fft"}])
     assert out.x_domain == "frequency"
-    assert out.recording_start_clock_s == 47556.0
+    assert out.recording_start == start
 
 
 def test_fft_too_few_samples_raises():
