@@ -36,6 +36,8 @@ The processor logic in `main.py` is identical in both modes.
 
 In one sentence: the MCP `plot_file` tool turns the user's sentence into a template name plus `template_args`; `main.py` calls that template's `render()`; the template parses and validates the arguments, asks a reader (`processor/readers/`) to turn the file into a `Signal`, runs the optional DSP `pipeline` over it (`processor/tools/ts_dsp/`), and plots the result. [`processor/README.md`](processor/README.md) walks one concrete request through every function with a flowchart.
 
+The file quick-plot sees is not always the package the user picked. In the `plot-templates` workflow a prep stage, [processor-plot-prep](https://github.com/skylerzhou/processor-plot-prep), runs first: it converts what quick-plot cannot read (today: a MEF 2.0 recording, to one NWB file holding the one or two channels the plot needs) and copies everything else through unchanged. So an iEEG request on a MEF recording arrives here as `LA01_LA02.nwb`, and the NWB reader handles it like any other recording.
+
 ## Project layout
 
 ```
@@ -52,7 +54,7 @@ processor/
     __init__.py     # registry — { NAME → module }
     contract.py     # declarative half of the template contract (TemplateArg / ARGS_SPEC / …)
     csv_column_distributions.py
-    edf_processed_timeseries.py
+    ieeg_processed_timeseries.py   # iEEG voltage trace / montage from EDF or NWB, optional DSP pipeline
     fcs_channel_histograms.py
     fcs_compensation_heatmap.py
     fcs_fsc_ssc_scatter.py
@@ -62,12 +64,15 @@ processor/
     ts_dsp/         # time-series family (17 tools) — see "DSP pipeline tools"
       __init__.py           # the tool registry: explicit ALL_TOOLS list + get()/known_names()
       signal_definition.py  # the Signal dataclass + X_DOMAINS / Y_DOMAINS vocabulary
-      units.py              # time/voltage unit tables, H:M:S helpers
+      units.py              # time/voltage unit tables; the three time-input forms and how they anchor to a recording
+      modality.py           # detect_modality(): scalp EEG or intracranial iEEG, from channel names
       dsp_pipeline.py       # @dsp_tool contract + apply_dsp_pipeline runner
       filters.py, smoothing.py, frequency.py, feature_extraction.py   # the tools
   readers/          # file -> Signal; one module per format, chosen by extension
-    __init__.py     # load_signal(path, params) + the clip limits (MAX_DURATION_S, MIN_SAMPLES)
+    __init__.py     # load_signal(path, params), channel_names(path); re-exports the clip limits
+    window.py       # the window rules every reader shares (clock/date anchoring, bounds, MAX_DURATION_S, MIN_SAMPLES)
     edf_to_signal.py          # EDF via pyedflib: header, request-vs-header checks, channels, Signal
+    nwb_to_signal.py          # NWB (one ElectricalSeries) via h5py — the converter's output; gaps refused, not stitched
 schema/             # generated schemas (`make schemas`) — pennsieve-mcp vendors copies
   templates.json
   ts_tools.json
@@ -106,6 +111,10 @@ from processor.templates.contract import TemplateArg
 NAME = "your_template_name"               # the identifier the MCP enum advertises
 SUPPORTED_EXTENSIONS = (".ext1", ".ext2") # advisory; warned-not-blocked at runtime
 SUMMARY = "What it plots + example user phrasings (this text routes requests)."
+# Optional, for a template written for one kind of recording: which
+# modalities it draws ("ieeg", "eeg"); see tools/ts_dsp/modality.py and the
+# _check_modality() step in ieeg_processed_timeseries.py.
+# SUPPORTED_MODALITIES = ("ieeg",)
 
 # Declarative contract — only for parameterised templates; a summary-only
 # template stops at SUMMARY. The generated schema (templates.json), and
@@ -173,7 +182,7 @@ If you're adding a dep that isn't already on the EFS layer, also append it to [`
 
 ## DSP pipeline tools (`processor/tools/ts_dsp/`)
 
-A template that declares `PIPELINE_TOOLS = "ts_dsp"` (today: `edf_processed_timeseries`) accepts an optional `pipeline` argument — an ordered list of `{tool, params}` steps run on the Signal between reading and plotting:
+A template that declares `PIPELINE_TOOLS = "ts_dsp"` (today: `ieeg_processed_timeseries`) accepts an optional `pipeline` argument — an ordered list of `{tool, params}` steps run on the Signal between reading and plotting:
 
 ```json
 [{"tool": "notch_filter", "params": {"w0": 60}},
@@ -208,7 +217,7 @@ pennsieve-mcp vendors copies at `internal/tools/schemas/` (embedded into the Go 
 
 The workflow definitions consumed by `workflow-service` live in `workflows/`:
 
-- **`plot-templates.json`** — the main workflow (v0.6+). Single stage; Lambda; canned-template-first with agent fallback; viewer-asset data-target.
+- **`plot-templates.json`** — the main workflow (v0.6+). Single stage; Lambda; canned-template-first with agent fallback; viewer-asset data-target. The two-stage form with processor-plot-prep in front (MEF → NWB, everything else passed through) is tested from that repo's `workflows/` and moves here once it is the production definition.
 - **`quick-plot.json`** — the legacy agent-only workflow (kept for backwards compat).
 - **`populate-quick-plot-stack.json`** — one-time layer-population workflow. Uses `processor-build-python-layer` (a separate repo) + `persistent-layer` data-target to install the scientific Python stack into the `quick-plot-stack` EFS layer.
 
@@ -260,7 +269,7 @@ Every failure is one of five `PlotError` subclasses, named by what the user shou
 
 | class | `error_category` | next action | example codes |
 |---|---|---|---|
-| `PlotInvalidInputError` | `invalid_input` | fix `template_args` | `unknown_channel`, `invalid_time_window`, `missing_argument`, `unknown_tool`, `unknown_template` |
+| `PlotInvalidInputError` | `invalid_input` | fix `template_args` | `unknown_channel`, `invalid_time_window`, `window_spans_gap`, `unsupported_modality`, `missing_argument`, `unknown_tool`, `unknown_template` |
 | `PlotDataUnavailableError` | `data_unavailable` | pick another file / window | `unreadable_file`, `insufficient_samples`, `empty_data`, `missing_required_metadata` |
 | `PlotResourceLimitError` | `resource_limit` | shrink the request | `window_too_large`, `out_of_memory` |
 | `PlotEnvironmentError` | `environment` | update the compute node | `missing_dependency`, `config_missing_dirs` |
@@ -275,16 +284,16 @@ PUT {PENNSIEVE_API_HOST2}/compute/workflows/runs/{EXECUTION_RUN_ID}/outputs
 Authorization: Bearer {SESSION_TOKEN}
 {
   "quickplot.run_status": "failed",                         // succeeded | failed (same words as the run status)
-  "quickplot.requested_template": "edf_processed_timeseries",
+  "quickplot.requested_template": "ieeg_processed_timeseries",
   "quickplot.figure_generated_by": "",                      // template | agent | stub | "" (no figure)
   "quickplot.figure_bytes": "0",
   "quickplot.run_duration_seconds": "3.46",
   "quickplot.run_failure_error.error_category": "invalid_input",
   "quickplot.run_failure_error.error_code": "unknown_channel",
   "quickplot.run_failure_error.source_stage": "reader",
-  "quickplot.run_failure_error.user_message": "Channel 'EEG-7' is not in the file. Available channels: F7, F8, FP1",
+  "quickplot.run_failure_error.user_message": "Channel 'EEG-7' is not in the file. Available channels: LA01, LA02, LA03",
   "quickplot.run_failure_error.user_next_step": "Check the plot settings (channel, time window, units) and try again.",
-  "quickplot.run_failure_error.error_facts": "{\"available_channels\": [\"F7\", \"F8\", \"FP1\"], \"channel\": \"EEG-7\"}",
+  "quickplot.run_failure_error.error_facts": "{\"available_channels\": [\"LA01\", \"LA02\", \"LA03\"], \"channel\": \"EEG-7\"}",
   "quickplot.reporter.auth": "session_token",               // which token the Lambda used
   "quickplot.reporter.host": "https://api2.pennsieve.net"
 }
@@ -302,7 +311,7 @@ The processor *will not run* without the `quick-plot-stack` EFS layer mounted. T
 - Tabular: `pandas`, `numpy`, `scipy`
 - Single-cell: `anndata`, `scanpy`
 - Flow cytometry: `flowkit`, `fcsparser`
-- Electrophysiology (EDF/iEEG): `pyedflib`
+- Electrophysiology: `pyedflib` (EDF), `h5py` (NWB — read directly, no pynwb)
 - Imaging: `nibabel`, `tifffile`, `pillow`
 - R interop: `pyreadr`
 - General: `pyarrow`, `h5py`

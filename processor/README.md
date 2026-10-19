@@ -4,9 +4,11 @@ This page follows one request through the code, function by function. The
 top-level [README](../README.md) covers what the repo is and how to run it;
 this one is for reading the code.
 
-**Example request used throughout:** *"For `XXXX.edf`, view channel F7 as
-the montage F7-Fp1, from 500 s after onset for 50 s; notch out mains hum, then
-show the FFT."*
+**Example request used throughout:** *"For `XXXX.edf`, view channel LA01 as
+the montage LA01-LA02, from 500 s after onset for 50 s; notch out mains hum,
+then show the FFT."* (An intracranial recording. Had the file been the
+converter's `LA01_LA02.nwb`, only step 2 would differ: the registry would pick
+the NWB reader.)
 
 ## The shape
 
@@ -15,13 +17,13 @@ show the FFT."*
 flowchart TD
     MCP["plot_file (MCP tool)<br/>pennsieve-mcp/internal/tools/plot_file.go"]
     MAIN["try_canned_template()<br/>processor/main.py"]
-    RENDER["render()<br/>processor/templates/edf_processed_timeseries.py"]
-    PARSE["_parse() then _validate()<br/>processor/templates/edf_processed_timeseries.py"]
-    LOAD["load_signal(path, params)<br/>processor/readers/__init__.py<br/>processor/readers/edf_to_signal.py"]
+    RENDER["render()<br/>processor/templates/ieeg_processed_timeseries.py"]
+    PARSE["_parse(), _validate(), _check_modality()<br/>processor/templates/ieeg_processed_timeseries.py"]
+    LOAD["load_signal(path, params)<br/>processor/readers/__init__.py<br/>processor/readers/edf_to_signal.py (or nwb_to_signal.py)"]
     PIPE["apply_dsp_pipeline(signal, steps)<br/>processor/tools/ts_dsp/dsp_pipeline.py"]
     T0["notch_filter<br/>processor/tools/ts_dsp/filters.py"]
     T1["fft<br/>processor/tools/ts_dsp/frequency.py"]
-    PLOT["_plot(signal, params, out)<br/>processor/templates/edf_processed_timeseries.py"]
+    PLOT["_plot(signal, params, out)<br/>processor/templates/ieeg_processed_timeseries.py"]
     PNG(["figure.png"])
 
     MCP -- "TEMPLATE, TEMPLATE_ARGS (JSON)" --> MAIN
@@ -67,8 +69,8 @@ The AI model reads the tool description (generated from
 sentence into a template name plus arguments:
 
 ```json
-{ "template": "edf_processed_timeseries",
-  "template_args": { "channel": "F7", "channel2": "Fp1",
+{ "template": "ieeg_processed_timeseries",
+  "template_args": { "channel": "LA01", "channel2": "LA02",
                      "start_time": 500, "duration": 50, "time_unit": "s",
                      "pipeline": [ {"tool": "notch_filter", "params": {"w0": 60}},
                                    {"tool": "fft", "params": {}} ] } }
@@ -89,57 +91,74 @@ with the file path, the output path and the argument dictionary.
 
 **Output:** `render(target_file_path, output_path, **template_args)`.
 
-### `render()` — `processor/templates/edf_processed_timeseries.py`
+### `render()` — `processor/templates/ieeg_processed_timeseries.py`
 
-Five lines, one per step below. The only thing it checks itself is the file
-extension, which needs no file access.
+Six lines, one per step below. The only thing it checks itself is the file
+extension (`.edf` or `.nwb`), which needs no file access.
 
 ```python
 params = _parse(...)                                   # step 1
 _validate(params)                                      # step 1
+_check_modality(target_file_path, params)              # step 1, last part
 signal = load_signal(target_file_path, params)         # step 2
 signal = apply_dsp_pipeline(signal, params.pipeline)   # step 3
 _plot(signal, params, output_path)                     # step 4
 ```
 
-### Step 1 — `_parse()` and `_validate()` — same file
+### Step 1 — `_parse()`, `_validate()`, `_check_modality()` — same file
 
 `_parse` turns the raw dictionary into typed values: `start_time=500` is a
-number (not a clock string), `time_unit="s"` means seconds, no `y_range` or
-`y_unit` was given, and a second channel was given so this is a montage.
+number, so with `time_unit="s"` it is 500 seconds from the recording start
+(a `"13:20:36"` would have been a clock time, a `"2020-09-24 13:20:36"` a
+full date; `tools/ts_dsp/units.py` reads all three and both readers anchor
+them the same way); no `y_range` or `y_unit` was given; a second channel was
+given, so this is a montage; no `modality` was given.
 
 `_validate` applies the rules that need only the user's inputs: channel and
 start time present, at least one of end time / duration, the two montage
 channels differ. Neither function opens the file.
 
-**Output:** a `RenderParams` — `channel="F7"`, `channel2="Fp1"`,
+`_check_modality` asks the reader for the file's channel names and
+`tools/ts_dsp/modality.py` what they look like: LA01, LA02, … are numbered
+contacts of electrode arrays, so "ieeg", which this template declares in
+`SUPPORTED_MODALITIES`. A file whose names were Fp1, Cz, O2 … would be
+refused here (`unsupported_modality`) unless the request said
+`modality="ieeg"`; names nobody can place are let through.
+
+**Output:** a `RenderParams` — `channel="LA01"`, `channel2="LA02"`,
 `montage=True`, `start=500 s`, `duration_s=50`, `y_limits=None`,
-`volt=None`, `pipeline=[…]`.
+`volt=None`, `pipeline=[…]`, `modality=None`.
 
 ### Step 2 — `load_signal(path, params)` — `processor/readers/`
 
-`readers/__init__.py` sees `.edf` and hands off to `edf_to_signal.py`, which
-works in four functions:
+`readers/__init__.py` sees `.edf` and hands off to `edf_to_signal.py` (`.nwb`
+would go to `nwb_to_signal.py`; both work the same way), in four functions:
 
 1. `_read_header` — open the EDF with pyedflib and read only the header:
    channel names, sampling rate, recording length and unit per channel, and
-   the recording's start time of day.
+   the recording's start date and time.
 2. `_check_against_header` — everything about the request that could only be
-   checked with the header in hand: F7 and Fp1 exist and share a sampling
-   rate; the window 500–550 s lies inside the recording and under the 600 s
-   cap; no `y_unit` was given, so use the unit the file declares for F7
-   (here µV). A clock-string start time would be anchored to the recording's
-   start time here.
-3. `_read_channels` — read F7 and Fp1 between 500 s and 550 s; subtract to get
-   the montage.
+   checked with the header in hand: LA01 and LA02 exist and share a sampling
+   rate; the window (via `readers/window.py`, the rules every reader shares:
+   a clock or date start would be anchored to the header's start here, end
+   and duration must agree, 500–550 s lies inside the recording and under
+   the 600 s cap, enough samples); no `y_unit` was given, so use the unit the
+   file declares for LA01 (here µV; an NWB file stores volts and is shown in
+   µV). The NWB reader adds one check of its own: a recording with gaps
+   carries per-sample timestamps, and a window that crosses a gap is refused
+   (`window_spans_gap`, naming the hole) rather than drawn stitched.
+3. `_read_channels` — read LA01 and LA02 between 500 s and 550 s; subtract to
+   get the montage.
 4. `_build_signal` — convert to µV and package as a `Signal`.
 
 Rule of thumb for where a check lives: if it can be done without the file it
-is in `_parse`/`_validate`; if it needs the header it is in the reader.
+is in `_parse`/`_validate`; if it needs the header it is in the reader; if it
+is about the window and not the format, it is in `readers/window.py`.
 
 **Output:** a raw `Signal` — `t` in seconds from recording start (500 … 550),
-`y` in µV (F7 minus Fp1), `fs`, `channel="F7-Fp1"`, `x_domain="time"`,
-`y_domain="amplitude"`, `recording_start_clock_s` from the header.
+`y` in µV (LA01 minus LA02), `fs`, `channel="LA01-LA02"`, `x_domain="time"`,
+`y_domain="amplitude"`, `recording_start` from the header (a datetime: naive
+for EDF, the recorder's own clock; UTC for the converter's NWB).
 
 ### Step 3 — `apply_dsp_pipeline(signal, steps)` — `tools/ts_dsp/dsp_pipeline.py`
 
@@ -173,9 +192,12 @@ Had the user asked for fft *then* notch, step 1 would fail the gate with
 
 The y-axis is no longer voltage, so a voltage `y_range` would be ignored and
 the axis is scaled to the data. The x-axis is formatted from `params`: numeric
-input → plain numbers in the user's unit; clock input → H:M:S ticks anchored
-at `signal.recording_start_clock_s`. A spectrum is drawn as-is. Axis labels
-come straight off the `Signal` (`"frequency (Hz)"`, `"magnitude (µV)"`).
+input → plain numbers in the user's unit; clock or date input → H:M:S ticks
+anchored at `signal.recording_start`, the label naming the clock
+(`"time (h:m:s, local)"` for EDF, `"time (h:m:s, UTC)"` for the converter's
+NWB) and, only when the window crosses midnight, the date it starts on. A
+spectrum is drawn as-is. Axis labels come straight off the `Signal`
+(`"frequency (Hz)"`, `"magnitude (µV)"`).
 
 **Output:** `OUTPUT_DIR/figure.png`.
 
@@ -218,7 +240,7 @@ flowchart TD
 
 ### Route A — fail fast: the user asked for a channel the file doesn't have
 
-Same request as above, but `"channel": "ZZ"`; the file has F7, F8, FP1.
+Same request as above, but `"channel": "ZZ"`; the file has LA01, LA02, LA03.
 
 1. **Step 2, `load_signal()`** (`readers/edf_to_signal.py`) — `_Header.index("ZZ")`
    finds no match and raises
@@ -226,8 +248,8 @@ Same request as above, but `"channel": "ZZ"`; the file has F7, F8, FP1.
    ```python
    PlotInvalidInputError(
        PlotErrorCode.UNKNOWN_CHANNEL,
-       "Channel 'ZZ' is not in the file. Available channels: F7, F8, FP1",
-       error_facts={"channel": "ZZ", "available_channels": ["F7", "F8", "FP1"]},
+       "Channel 'ZZ' is not in the file. Available channels: LA01, LA02, LA03",
+       error_facts={"channel": "ZZ", "available_channels": ["LA01", "LA02", "LA03"]},
        source_stage=PlotErrorStage.READER)
    ```
 
@@ -245,16 +267,16 @@ Same request as above, but `"channel": "ZZ"`; the file has F7, F8, FP1.
    outputs in workflow-service:
 
    ```
-   Quick-plot failed [invalid_input/unknown_channel at reader]: Channel 'ZZ' is not in the file. Available channels: F7, F8, FP1
+   Quick-plot failed [invalid_input/unknown_channel at reader]: Channel 'ZZ' is not in the file. Available channels: LA01, LA02, LA03
    ```
    ```
    quickplot.run_status                       = failed
    quickplot.run_failure_error.error_category = invalid_input
    quickplot.run_failure_error.error_code     = unknown_channel
    quickplot.run_failure_error.source_stage   = reader
-   quickplot.run_failure_error.user_message   = Channel 'ZZ' is not in the file. Available channels: F7, F8, FP1
+   quickplot.run_failure_error.user_message   = Channel 'ZZ' is not in the file. Available channels: LA01, LA02, LA03
    quickplot.run_failure_error.user_next_step = Check the plot settings (channel, time window, units) and try again.
-   quickplot.run_failure_error.error_facts    = {"available_channels": ["F7", "F8", "FP1"], "channel": "ZZ"}
+   quickplot.run_failure_error.error_facts    = {"available_channels": ["LA01", "LA02", "LA03"], "channel": "ZZ"}
    ```
 
 Total: a few seconds, and the template's own sentence reaches the run record.
@@ -299,20 +321,20 @@ log line is the report.
 
 ## Run it locally
 
-You have an EDF file and want the PNG without the platform in the loop.
+You have an EDF (or NWB) file and want the PNG without the platform in the loop.
 The processor reads its request from environment variables, so one command
 does it:
 
 ```sh
-pip install -r requirements-dev.txt          # numpy, scipy, pyedflib, matplotlib, pytest
+pip install -r requirements-dev.txt          # numpy, scipy, pyedflib, h5py, matplotlib, pytest
 mkdir -p /tmp/qp/in /tmp/qp/out
 cp /path/to/your/recording.edf /tmp/qp/in/
 
 INPUT_DIR=/tmp/qp/in \
 OUTPUT_DIR=/tmp/qp/out \
 TARGET_FILE_NAME=recording.edf \
-TEMPLATE=edf_processed_timeseries \
-TEMPLATE_ARGS='{"channel": "F7", "channel2": "Fp1",
+TEMPLATE=ieeg_processed_timeseries \
+TEMPLATE_ARGS='{"channel": "LA01", "channel2": "LA02",
                 "start_time": 500, "duration": 50, "time_unit": "s",
                 "pipeline": [{"tool": "notch_filter", "params": {"w0": 60}},
                              {"tool": "fft", "params": {}}]}' \
@@ -325,8 +347,8 @@ open /tmp/qp/out/figure.png                  # macOS; xdg-open on Linux
 user's sentence (the example above is the request traced on this page); the
 keys are the ones listed under `ARGS_SPEC` in the template. Drop `pipeline`
 for a raw trace; use `"end_time"` instead of `"duration"`, or clock strings
-such as `"start_time": "13:12:36"` with no `time_unit`, as the template
-allows. A warning that the layer site-packages were not found is expected
+such as `"start_time": "13:12:36"` (or `"2020-09-24 13:12:36"` for a
+recording that runs for days) with no `time_unit`, as the template allows. A warning that the layer site-packages were not found is expected
 outside AWS and harmless: locally the dependencies come from your own
 environment. If the template raises, the processor logs the reason and then
 tries the LLM agent path, which needs `PROMPT` and `LLM_GOVERNOR_URL`; for a
@@ -335,9 +357,9 @@ template-only run you can ignore that second error.
 To call the template from Python instead (e.g. in a notebook):
 
 ```python
-from processor.templates import edf_processed_timeseries as t
+from processor.templates import ieeg_processed_timeseries as t
 t.render("/tmp/qp/in/recording.edf", "/tmp/qp/out/figure.png",
-         channel="F7", channel2="Fp1", start_time=500, duration=50, time_unit="s",
+         channel="LA01", channel2="LA02", start_time=500, duration=50, time_unit="s",
          pipeline=[{"tool": "notch_filter", "params": {"w0": 60}}, {"tool": "fft"}])
 ```
 
