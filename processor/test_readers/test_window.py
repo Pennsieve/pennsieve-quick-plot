@@ -25,7 +25,7 @@ from processor.errors import (
 )
 from processor.readers import MAX_DURATION_S, MIN_SAMPLES
 from processor.readers.window import resolve_window
-from processor.templates.edf_processed_timeseries import RenderParams
+from processor.templates.ieeg_processed_timeseries import RenderParams
 from processor.tools.ts_dsp import TimePoint
 
 _START = datetime(2020, 9, 24, 13, 12, 36)

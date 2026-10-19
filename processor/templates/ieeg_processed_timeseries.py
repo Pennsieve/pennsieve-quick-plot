@@ -1,7 +1,12 @@
 """
-edf_processed_timeseries — voltage trace for one channel (or a bipolar
-montage) over a time window, rendered from an EDF (iEEG/EEG) recording,
-with optional DSP processing.
+ieeg_processed_timeseries — voltage trace for one channel (or a bipolar
+montage) of an intracranial (iEEG) recording over a time window, from an
+EDF or NWB file, with optional DSP processing.
+
+The file may be the recording itself (EDF) or what processor-plot-prep
+wrote from a MEF 2.0 recording (NWB, one or two channels); the reader
+registry picks the reader by extension, so this template never looks
+inside the file.
 
 render() is five lines, one per stage; see processor/README.md for the
 call chain with an example request:
@@ -70,7 +75,7 @@ scientific-notation offset).
 ERRORS (RuntimeError / ts_dsp.ToolInputError; the processor then falls back
 to the agent loop — see processor/main.py::try_canned_template)
 --------------------------------------------------------------------------
-_parse / _validate:  wrong extension; channel or start missing; neither end
+_parse / _validate:  extension not .edf/.nwb; channel or start missing; neither end
                      nor duration; both montage channels the same; time_unit
                      missing for numeric times or not a time unit; y_unit not a
                      voltage unit; malformed y_range, clock or date string;
@@ -115,8 +120,8 @@ from processor.tools.ts_dsp import modality as _modality
 
 
 ############# TEMPLATE CONTRACT ##################
-NAME = "edf_processed_timeseries"
-SUPPORTED_EXTENSIONS: tuple[str, ...] = (".edf",)
+NAME = "ieeg_processed_timeseries"
+SUPPORTED_EXTENSIONS: tuple[str, ...] = (".edf", ".nwb")
 # The kinds of recording this template is written for (see
 # tools/ts_dsp/modality.py). Scalp EEG is read at different scales and
 # montages; it gets its own template rather than this one's conventions.
@@ -127,9 +132,10 @@ SUPPORTED_MODALITIES: tuple[str, ...] = ("ieeg",)
 # with render()'s keyword arguments and the INPUTS section above.
 SUMMARY = (
     "voltage trace for one channel, or a bipolar montage of two channels, "
-    "over a chosen time window, with optional DSP processing (scalp EEG / "
-    "intracranial iEEG); \"plot channel F8 from 10s to 15s\", \"show the "
-    "F7-F8 montage for the first minute\""
+    "of an intracranial iEEG recording in EDF or NWB (NWB as written by the "
+    "MEF converter), over a chosen time window, with optional DSP "
+    "processing; \"plot channel LA01 from 10s to 15s\", \"show the "
+    "LA01-LA02 montage for the first minute\""
 )
 ARGS_SPEC: tuple[TemplateArg, ...] = (
     TemplateArg("channel", "string",
@@ -469,13 +475,14 @@ def render(
     pipeline: "object" = None,
     modality: str | None = None,
 ) -> None:
-    """Render an (optionally processed) timeseries clip from an EDF file."""
+    """Render an (optionally processed) timeseries clip from an EDF or NWB file."""
     ext = os.path.splitext(target_file_path)[1].lower()
     if ext not in SUPPORTED_EXTENSIONS:
         raise PlotDataUnavailableError(
             PlotErrorCode.UNSUPPORTED_FILE_FORMAT,
-            f"{target_file_path!r} is not an EDF file (extension {ext!r}). "
-            f"Supported: {', '.join(SUPPORTED_EXTENSIONS)}."
+            f"{target_file_path!r} is not a recording this template reads "
+            f"(extension {ext!r}). Supported: {', '.join(SUPPORTED_EXTENSIONS)}.",
+            error_facts={"extension": ext, "supported": list(SUPPORTED_EXTENSIONS)},
         )
 
     params = _parse(channel=channel, channel2=channel2, start_time=start_time,

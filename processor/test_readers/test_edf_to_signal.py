@@ -1,7 +1,7 @@
 """
 Tests for processor.readers — the file -> Signal step on its own.
 
-The template tests (test_templates/test_edf_processed_timeseries.py) drive
+The template tests (test_templates/test_ieeg_processed_timeseries.py) drive
 the whole render() path end to end. These tests pin the reader's own
 contract at its seams, so a change in how the file is read is caught here
 rather than as a mysterious template failure:
@@ -31,7 +31,7 @@ import pytest
 from processor import readers
 from processor.errors import PlotDataUnavailableError, PlotErrorCode
 from processor.readers import edf_to_signal as reader
-from processor.templates.edf_processed_timeseries import RenderParams
+from processor.templates.ieeg_processed_timeseries import RenderParams
 from processor.tools.ts_dsp import TimePoint
 
 _START = datetime(2020, 9, 24, 13, 12, 36)

@@ -22,7 +22,7 @@ import pytest
 from processor import readers
 from processor.errors import PlotErrorCode, PlotInvalidInputError
 from processor.readers import nwb_to_signal as reader
-from processor.templates.edf_processed_timeseries import RenderParams
+from processor.templates.ieeg_processed_timeseries import RenderParams
 from processor.test_readers.fixtures import make_nwb_fixtures as fx
 from processor.tools.ts_dsp import TimePoint
 

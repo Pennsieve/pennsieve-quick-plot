@@ -1,5 +1,5 @@
 """
-Tests for the edf_processed_timeseries template.
+Tests for the ieeg_processed_timeseries template.
 
 Layout (one banner section per concern; render() is driven end to end, so
 these tests hold regardless of how the work is split between _parse /
@@ -15,6 +15,7 @@ _validate, the reader and _plot):
   8. DSP PIPELINES            — end-to-end pipelines through render()
   9. SPECTRUM PIPELINES       — fft/psd move the x-axis off the time domain
  10. MODALITY                 — scalp EEG is refused unless `modality` says otherwise
+ 11. NWB INPUT                — the same template on the converter's NWB output
 
 EDF is a binary format, so instead of a text fixture (as the TSV tests use)
 these tests synthesize a tiny, deterministic EDF with pyedflib.EdfWriter via
@@ -30,19 +31,20 @@ Axes method and record what render() passes to it — asserting on the figure's
 To run:
 Requires pyedflib + numpy + matplotlib + pytest to be importable
 pip install -r requirements-dev.txt
-pytest processor/test_templates/test_edf_processed_timeseries.py
+pytest processor/test_templates/test_ieeg_processed_timeseries.py
 """
 
 # SET UP
 from __future__ import annotations
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pyedflib
 import pytest
 import matplotlib.axes
 from processor.errors import PlotErrorCode, PlotInvalidInputError
-from processor.templates import edf_processed_timeseries as template
+from processor.templates import ieeg_processed_timeseries as template
 from processor.tools.ts_dsp import TimePoint, resolve_time_unit
 
 # Anchor clock for the synthetic recording (matches how a real EDF carries a
@@ -709,3 +711,55 @@ def test_render_lets_an_unplaceable_file_through(tmp_path):
     out = tmp_path / "figure.png"
     template.render(src, str(out), channel="EKG", **_OK)
     assert out.read_bytes().startswith(b"\x89PNG")
+
+
+# ---------------------------------------------------------------------------
+# 11. NWB INPUT
+#     A MEF 2.0 recording reaches quick-plot as the NWB file processor-plot-
+#     prep writes; the reader registry picks the NWB reader by extension and
+#     the template is otherwise unchanged. The fixtures are real writer
+#     output (see test_readers/fixtures/make_nwb_fixtures.py): LA01 and
+#     LA02 at 128 Hz, session start 2020-09-24 13:12:36 UTC.
+# ---------------------------------------------------------------------------
+_NWB = Path(__file__).resolve().parents[1] / "test_readers" / "fixtures"
+
+
+def test_template_accepts_edf_and_nwb():
+    assert template.SUPPORTED_EXTENSIONS == (".edf", ".nwb")
+
+
+def test_render_writes_a_png_from_nwb(monkeypatch, tmp_path):
+    out = tmp_path / "figure.png"
+    ylabels = _spy_first_arg(monkeypatch, "set_ylabel")
+    titles = _spy_first_arg(monkeypatch, "set_title")
+
+    template.render(str(_NWB / "mef_continuous.nwb"), str(out),
+                    channel="LA01", channel2="LA02", start_time=1, duration=2, time_unit="s")
+
+    assert out.read_bytes().startswith(b"\x89PNG")
+    assert ylabels[-1] == "amplitude (µV)"          # NWB stores volts; shown in µV
+    assert titles[-1] == "Processed timeseries for montage LA01-LA02"
+
+
+def test_render_nwb_clock_window_is_on_utc(monkeypatch, tmp_path):
+    # The converter stores the session start in UTC, so clock-string times
+    # are read as UTC and the axis label says so.
+    labels = _spy_first_arg(monkeypatch, "set_xlabel")
+    template.render(str(_NWB / "mef_continuous.nwb"), str(tmp_path / "figure.png"),
+                    channel="LA01", start_time="13:12:37", end_time="13:12:39")
+    assert labels[-1] == "time (h:m:s, UTC)"
+
+
+def test_render_nwb_window_across_a_gap_is_refused(tmp_path):
+    with pytest.raises(PlotInvalidInputError) as ei:
+        template.render(str(_NWB / "mef_gapped.nwb"), str(tmp_path / "figure.png"),
+                        channel="LA01", start_time=3, end_time=11, time_unit="s")
+    assert ei.value.error_code is PlotErrorCode.WINDOW_SPANS_GAP
+    assert "crosses a gap in the recording" in str(ei.value)
+
+
+def test_render_raises_on_unsupported_extension(tmp_path):
+    bad = tmp_path / "rec.xyz"
+    bad.write_bytes(b"x")
+    with pytest.raises(RuntimeError, match="not a recording this template reads"):
+        template.render(str(bad), str(tmp_path / "figure.png"), channel="LA01", **_OK)

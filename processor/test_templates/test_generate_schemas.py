@@ -32,13 +32,13 @@ def test_every_registered_template_is_in_schema():
 def test_entry_shape_and_needs_args_derivation():
     by_name = {t["name"]: t for t in build_template_schema()["templates"]}
 
-    edf = by_name["edf_processed_timeseries"]
-    assert edf["needs_args"] is True
-    assert edf["pipeline_tools"] == "ts_dsp"
-    assert edf["extensions"] == [".edf"]
-    required = [a["name"] for a in edf["args"] if a["required"]]
+    ieeg = by_name["ieeg_processed_timeseries"]
+    assert ieeg["needs_args"] is True
+    assert ieeg["pipeline_tools"] == "ts_dsp"
+    assert ieeg["extensions"] == [".edf", ".nwb"]
+    required = [a["name"] for a in ieeg["args"] if a["required"]]
     assert required == ["channel", "start_time"]
-    assert set(edf["example_args"]) >= set(required)
+    assert set(ieeg["example_args"]) >= set(required)
 
     csv = by_name["csv_column_distributions"]
     assert csv["needs_args"] is False

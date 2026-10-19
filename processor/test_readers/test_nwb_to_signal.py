@@ -35,7 +35,7 @@ import pytest
 from processor import readers
 from processor.errors import PlotDataUnavailableError, PlotErrorCode, PlotInvalidInputError
 from processor.readers import nwb_to_signal as reader
-from processor.templates.edf_processed_timeseries import RenderParams
+from processor.templates.ieeg_processed_timeseries import RenderParams
 from processor.tools.ts_dsp import TimePoint
 
 _START = datetime(2020, 9, 24, 13, 12, 36, tzinfo=timezone.utc)

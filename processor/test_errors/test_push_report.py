@@ -62,14 +62,14 @@ def _invalid(msg="Channel 'X' is not in this file.", **kw):
 # always strings, long values clipped, paths trimmed from user-facing text.
 
 def test_to_outputs_keys_mirror_the_report_fields():
-    r = PlotRunReport(run_status="failed", requested_template="edf_processed_timeseries",
+    r = PlotRunReport(run_status="failed", requested_template="ieeg_processed_timeseries",
                       run_duration_seconds=3.456,
                       run_failure_error=_invalid(error_facts={"available_channels": ["F7", "F8"]},
                                                  source_stage=PlotErrorStage.READER))
     out = to_outputs(r)
     assert out == {
         "quickplot.run_status": "failed",
-        "quickplot.requested_template": "edf_processed_timeseries",
+        "quickplot.requested_template": "ieeg_processed_timeseries",
         "quickplot.figure_generated_by": "",
         "quickplot.figure_bytes": "0",
         "quickplot.run_duration_seconds": "3.46",
@@ -86,7 +86,7 @@ def test_to_outputs_keys_mirror_the_report_fields():
 
 def test_fallback_trigger_error_is_reported_alongside_success():
     r = PlotRunReport(run_status="succeeded", figure_generated_by="agent", figure_bytes=99,
-                      requested_template="edf_processed_timeseries",
+                      requested_template="ieeg_processed_timeseries",
                       fallback_trigger_error=PlotEnvironmentError(
                           PlotErrorCode.MISSING_DEPENDENCY, "missing pyedflib"))
     out = to_outputs(r)
