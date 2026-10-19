@@ -7,6 +7,7 @@ plus the shared definitions everything codes against.
 Layout:
   signal_definition.py  the Signal dataclass + domain vocabulary
   units.py              time/voltage unit tables, H:M:S helpers, time-point rules
+  modality.py           detect_modality(): scalp EEG or intracranial iEEG, from channel names
   dsp_pipeline.py       the @dsp_tool contract + apply_dsp_pipeline runner
   filters.py            frequency-selective filters (highpass, lowpass, …)
   smoothing.py          domain-agnostic smoothers (moving_average, …)
@@ -37,6 +38,7 @@ from .units import (  # noqa: F401
     seconds_since_midnight,
     seconds_to_clock,
 )
+from .modality import MODALITIES, detect_modality  # noqa: F401
 from .dsp_pipeline import ToolInputError, ToolSpec, apply_dsp_pipeline  # noqa: F401
 
 # The tools.
@@ -81,6 +83,7 @@ __all__ = [
     "TimePoint", "parse_time_point", "resolve_time_point",
     "is_clock_string", "clock_to_seconds", "seconds_to_clock",
     "seconds_since_midnight", "clock_name",
+    "MODALITIES", "detect_modality",
     # pipeline
     "ToolInputError", "apply_dsp_pipeline",
     # registry

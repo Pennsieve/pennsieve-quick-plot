@@ -8,6 +8,7 @@ call chain with an example request:
 
     params = _parse(...)                   # user's inputs -> typed RenderParams
     _validate(params)                      # rules that need only those inputs
+    _check_modality(path, params)          # the recording is the kind this template draws
     signal = load_signal(path, params)     # file -> raw Signal   (processor/readers)
     signal = apply_dsp_pipeline(signal, params.pipeline)   # optional DSP (tools/ts_dsp)
     _plot(signal, params, output_path)     # figure.png
@@ -15,7 +16,9 @@ call chain with an example request:
 Where a check lives: anything checkable without the file is in _parse /
 _validate; anything that needs the file's header (channels exist, window
 fits the recording, clock times anchored to the recording start, header
-voltage unit) is in the reader.
+voltage unit) is in the reader. The modality check sits between: it needs
+the file's channel names (from the reader) but the decision is the
+template's, because the template is what is modality-specific.
 
 --------------------------------------------------------------------------
 INPUTS (keyword args to render(), i.e. the MCP `template_args`)
@@ -50,6 +53,12 @@ Optional:
                           declares for the channel (blank -> µV).
   pipeline                ordered list of DSP steps, each {"tool": <name>,
                           "params": {...}}, run via ts_dsp.apply_dsp_pipeline.
+  modality                "ieeg" or "eeg": what the recording is. Omitted ->
+                          guessed from the channel names (ts_dsp.modality).
+                          This template draws intracranial recordings
+                          (SUPPORTED_MODALITIES); a file that looks like
+                          scalp EEG is refused unless modality says
+                          otherwise.
 
 The x-axis mirrors the FORMAT the user typed: clock and date inputs render
 as H:M:S wall-clock ticks, with the axis label naming the clock (local or
@@ -64,7 +73,10 @@ to the agent loop — see processor/main.py::try_canned_template)
 _parse / _validate:  wrong extension; channel or start missing; neither end
                      nor duration; both montage channels the same; time_unit
                      missing for numeric times or not a time unit; y_unit not a
-                     voltage unit; malformed y_range, clock or date string.
+                     voltage unit; malformed y_range, clock or date string;
+                     modality not one of the known modalities.
+_check_modality:     the recording is (or is said to be) a modality this
+                     template does not draw.
 reader:              file unreadable; channel not present; montage channels
                      with different sampling rates; header declares an
                      unrecognizable voltage unit; clock or date time given
@@ -77,19 +89,21 @@ pipeline:            unknown tool; missing/invalid tool parameter; a step
 
 from __future__ import annotations
 
-from processor.errors import PlotErrorCode, PlotDataUnavailableError, PlotInvalidInputError
+from processor.errors import PlotErrorCode, PlotErrorStage, PlotDataUnavailableError, PlotInvalidInputError
 
 import os
 from dataclasses import dataclass
 from datetime import timedelta
 
-from processor.readers import load_signal, MAX_DURATION_S, MIN_SAMPLES  # noqa: F401 (limits re-exported for docs/tests)
+from processor.readers import channel_names, load_signal, MAX_DURATION_S, MIN_SAMPLES  # noqa: F401 (limits re-exported for docs/tests)
 from processor.templates.contract import TemplateArg
 from processor.tools.ts_dsp import (
+    MODALITIES,
     Signal,
     TimePoint,
     apply_dsp_pipeline,
     clock_name,
+    detect_modality,
     is_clock_string,
     parse_time_point,
     resolve_time_unit,
@@ -97,11 +111,16 @@ from processor.tools.ts_dsp import (
     seconds_since_midnight,
     seconds_to_clock,
 )
+from processor.tools.ts_dsp import modality as _modality
 
 
 ############# TEMPLATE CONTRACT ##################
 NAME = "edf_processed_timeseries"
 SUPPORTED_EXTENSIONS: tuple[str, ...] = (".edf",)
+# The kinds of recording this template is written for (see
+# tools/ts_dsp/modality.py). Scalp EEG is read at different scales and
+# montages; it gets its own template rather than this one's conventions.
+SUPPORTED_MODALITIES: tuple[str, ...] = ("ieeg",)
 
 # Declarative contract — the generated schema (templates.json) and therefore
 # the MCP plot_file tool description are built from these. Keep them in sync
@@ -114,10 +133,10 @@ SUMMARY = (
 )
 ARGS_SPEC: tuple[TemplateArg, ...] = (
     TemplateArg("channel", "string",
-                description="channel/label name, e.g. \"F8\", \"EKG2\""),
+                description="channel/label name, e.g. \"LA01\", \"RAH3\""),
     TemplateArg("channel2", "string", required=False,
                 description="second channel; when given, the trace is the "
-                            "bipolar montage channel-channel2 (e.g. \"F7\"-\"F8\"). "
+                            "bipolar montage channel-channel2 (e.g. \"LA01\"-\"LA02\"). "
                             "Both channels must share a sampling rate"),
     TemplateArg("start_time", "number, \"HH:MM:SS\" or \"YYYY-MM-DD HH:MM:SS\" string",
                 description="window start: a number (in `time_unit`, from the "
@@ -150,9 +169,14 @@ ARGS_SPEC: tuple[TemplateArg, ...] = (
                 description="voltage unit the y-axis / y_range are displayed in "
                             "(V, mV, uV, nV); omit to use the unit the file "
                             "itself declares for the channel"),
+    TemplateArg("modality", "string", required=False,
+                description="what the recording is: \"ieeg\" (intracranial) or "
+                            "\"eeg\" (scalp). Omit to detect it from the channel "
+                            "names; pass it when the detection is wrong or the "
+                            "dataset says (BIDS). This template draws ieeg"),
 )
 EXAMPLE_ARGS = {
-    "channel": "F8", "start_time": 10, "duration": 5,
+    "channel": "LA01", "start_time": 10, "duration": 5,
     "time_unit": "s", "y_range": 200, "y_unit": "uV",
 }
 ARGS_NOTES = (
@@ -193,6 +217,7 @@ class RenderParams:
     y_limits: "tuple[float, float] | None"
     volt: "tuple[float, str] | None"   # (factor-to-volts, symbol) if y_unit given
     pipeline: "list | None"
+    modality: "str | None" = None      # the user's say; None = detect from the file
 
 
 def _blank(value) -> bool:
@@ -236,11 +261,25 @@ def _parse_y_range(y_range) -> "tuple[float, float] | None":
     )
 
 
+def _parse_modality(modality) -> "str | None":
+    if _blank(modality):
+        return None
+    name = str(modality).strip().lower()
+    if name not in MODALITIES:
+        raise PlotInvalidInputError(
+            PlotErrorCode.INVALID_ARGUMENT,
+            f"modality {modality!r} is not one of: {', '.join(MODALITIES)}.",
+            error_facts={"modality": str(modality), "known": list(MODALITIES)},
+        )
+    return name
+
+
 def _parse(*, channel, channel2, start_time, end_time, duration, time_unit,
-           y_range, y_unit, pipeline) -> RenderParams:
+           y_range, y_unit, pipeline, modality=None) -> RenderParams:
     """Raw template_args -> RenderParams. Turns strings and numbers into
     typed values; opens no file. Raises only where a value cannot be
-    interpreted at all (bad unit spelling, malformed clock string or y_range)."""
+    interpreted at all (bad unit spelling, malformed clock string or y_range,
+    an unknown modality)."""
     # A time unit is only needed when a time is a plain number; clock and
     # date strings carry their own unit.
     has_numeric_time = any(
@@ -268,6 +307,7 @@ def _parse(*, channel, channel2, start_time, end_time, duration, time_unit,
         y_limits=_parse_y_range(y_range),
         volt=None if _blank(y_unit) else resolve_volt_unit(y_unit, required=True),
         pipeline=pipeline,
+        modality=_parse_modality(modality),
     )
 
 
@@ -288,6 +328,40 @@ def _validate(params: RenderParams) -> None:
             PlotErrorCode.INCOMPATIBLE_CHANNELS,
             f"A montage needs two different channels, but both are {params.channel!r}."
         )
+
+
+############# MODALITY ##################
+_MODALITY_NOUN = {"ieeg": "intracranial (iEEG)", "eeg": "scalp EEG"}
+
+
+def _check_modality(path: str, params: RenderParams) -> None:
+    """Refuse a recording this template is not written for.
+
+    The user's `modality` wins; otherwise the channel names decide, and a
+    file they cannot place ("unknown") is let through — a guess should not
+    block a plot, only a confident one. Needs the reader for the names,
+    nothing else from the file.
+    """
+    detected = params.modality is None
+    labels = channel_names(path) if detected else ()
+    modality = detect_modality(labels) if detected else params.modality
+    if modality == _modality.UNKNOWN or modality in SUPPORTED_MODALITIES:
+        return
+    kind = _MODALITY_NOUN.get(modality, modality)
+    supported = " or ".join(_MODALITY_NOUN.get(m, m) for m in SUPPORTED_MODALITIES)
+    if detected:
+        message = (f"This file looks like {kind} ({_modality.describe(labels)}); "
+                   f"this template is for {supported} recordings. "
+                   f"Pass modality={SUPPORTED_MODALITIES[0]} to override.")
+    else:
+        message = (f"modality was given as {modality!r} ({kind}), but this template "
+                   f"is for {supported} recordings. Choose a template for that modality.")
+    raise PlotInvalidInputError(
+        PlotErrorCode.UNSUPPORTED_MODALITY, message,
+        error_facts={"modality": modality, "supported_modalities": list(SUPPORTED_MODALITIES),
+                     "detected": detected},
+        source_stage=PlotErrorStage.TEMPLATE,
+    )
 
 
 ############# PLOT ##################
@@ -393,6 +467,7 @@ def render(
     y_range: "object" = None,
     y_unit: str | None = None,
     pipeline: "object" = None,
+    modality: str | None = None,
 ) -> None:
     """Render an (optionally processed) timeseries clip from an EDF file."""
     ext = os.path.splitext(target_file_path)[1].lower()
@@ -405,8 +480,9 @@ def render(
 
     params = _parse(channel=channel, channel2=channel2, start_time=start_time,
                     end_time=end_time, duration=duration, time_unit=time_unit,
-                    y_range=y_range, y_unit=y_unit, pipeline=pipeline)
+                    y_range=y_range, y_unit=y_unit, pipeline=pipeline, modality=modality)
     _validate(params)
+    _check_modality(target_file_path, params)
     signal = load_signal(target_file_path, params)
     signal = apply_dsp_pipeline(signal, params.pipeline)
     _plot(signal, params, output_path)

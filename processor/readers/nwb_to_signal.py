@@ -390,10 +390,12 @@ def _build_signal(t_s, y_volts, window: _Window, header: _Header, params) -> Sig
     )
 
 
-############# ENTRY POINT ##################
-def load_signal(path: str, params) -> Signal:
+############# ENTRY POINTS ##################
+def _open_header(path: str) -> _Header:
+    """_read_header, with a failure to open or decode the file reported as
+    an unreadable file."""
     try:
-        header = _read_header(path)
+        return _read_header(path)
     except (RuntimeError, ImportError, MemoryError):
         # Already a PlotError, or a platform problem (missing library, out of
         # memory) that main.py's wrap_unexpected_exception() knows how to
@@ -406,6 +408,15 @@ def load_signal(path: str, params) -> Signal:
             error_facts={"file": os.path.basename(path), "cause": exc.__class__.__name__},
             source_stage=PlotErrorStage.READER,
         ) from exc
+
+
+def channel_names(path: str) -> tuple:
+    """The channel names, in data-column order, from the header alone."""
+    return _open_header(path).labels
+
+
+def load_signal(path: str, params) -> Signal:
+    header = _open_header(path)
     window = _check_against_header(params, header)
     t_s, y_volts = _read_channels(path, window, header, params)
     return _build_signal(t_s, y_volts, window, header, params)

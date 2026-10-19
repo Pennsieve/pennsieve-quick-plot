@@ -14,11 +14,14 @@ _validate, the reader and _plot):
   7. PLOT CONTENT             — spies on matplotlib: data, title, axis labels
   8. DSP PIPELINES            — end-to-end pipelines through render()
   9. SPECTRUM PIPELINES       — fft/psd move the x-axis off the time domain
+ 10. MODALITY                 — scalp EEG is refused unless `modality` says otherwise
 
 EDF is a binary format, so instead of a text fixture (as the TSV tests use)
 these tests synthesize a tiny, deterministic EDF with pyedflib.EdfWriter via
 `_write_edf`. Each channel is a fixed sine wave, so reads are reproducible and
-a montage (channel - channel2) has a known value.
+a montage (channel - channel2) has a known value. The channels carry
+intracranial names (LA01 …): the template is for iEEG and refuses a file
+whose names look like scalp EEG (section 10).
 
 Plot-content tests use `_spy_first_arg` / `_spy_ylim` to wrap a matplotlib
 Axes method and record what render() passes to it — asserting on the figure's
@@ -38,6 +41,7 @@ import numpy as np
 import pyedflib
 import pytest
 import matplotlib.axes
+from processor.errors import PlotErrorCode, PlotInvalidInputError
 from processor.templates import edf_processed_timeseries as template
 from processor.tools.ts_dsp import TimePoint, resolve_time_unit
 
@@ -46,7 +50,7 @@ from processor.tools.ts_dsp import TimePoint, resolve_time_unit
 _START = datetime(2020, 9, 24, 13, 12, 36)
 
 
-def _write_edf(path, labels=("F7", "F8", "FP1", "EKG2"), fs=256, seconds=20,
+def _write_edf(path, labels=("LA01", "LA02", "LA03", "EKG2"), fs=256, seconds=20,
                freqs=None, dimension="uV", start=_START) -> str:
     """Write a small deterministic EDF and return its path as a string.
 
@@ -127,7 +131,7 @@ def _spy_ylim(monkeypatch) -> list:
 #    run with no EDF at all.
 # ---------------------------------------------------------------------------
 def _parse(**overrides):
-    kw = dict(channel="F7", channel2=None, start_time=0, end_time=None, duration=2,
+    kw = dict(channel="LA01", channel2=None, start_time=0, end_time=None, duration=2,
               time_unit="s", y_range=None, y_unit=None, pipeline=None)
     kw.update(overrides)
     return template._parse(**kw)
@@ -157,8 +161,8 @@ def test_parse_date_times_keep_the_full_moment():
 
 
 def test_parse_montage_flag_and_display_settings():
-    p = _parse(channel2="F8", y_range=100, y_unit="mV")
-    assert p.montage and p.channel2 == "F8"
+    p = _parse(channel2="LA02", y_range=100, y_unit="mV")
+    assert p.montage and p.channel2 == "LA02"
     assert p.y_limits == (-100.0, 100.0)
     assert p.volt == (1e-3, "mV")
     q = _parse(channel2="", y_range=[-5, 20])
@@ -192,7 +196,7 @@ def test_validate_requires_channel_start_and_a_window_end():
 
 def test_validate_rejects_montage_of_a_channel_with_itself():
     with pytest.raises(RuntimeError, match="two different channels"):
-        template._validate(_parse(channel="F7", channel2="f7"))
+        template._validate(_parse(channel="LA01", channel2="la01"))
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +208,7 @@ def test_render_writes_a_png(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     out = tmp_path / "figure.png"
 
-    template.render(src, str(out), channel="F7", **_OK)
+    template.render(src, str(out), channel="LA01", **_OK)
 
     assert out.is_file()
     assert out.read_bytes().startswith(b"\x89PNG")  # PNG file signature
@@ -215,7 +219,7 @@ def test_render_writes_a_png_from_clock_window(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     out = tmp_path / "figure.png"
 
-    template.render(src, str(out), channel="F7",
+    template.render(src, str(out), channel="LA01",
                     start_time="13:12:36", end_time="13:12:38",
                     y_range=100, y_unit="uV")  # no time_unit on purpose
 
@@ -227,7 +231,7 @@ def test_render_writes_a_png_from_date_window(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     out = tmp_path / "figure.png"
 
-    template.render(src, str(out), channel="F7",
+    template.render(src, str(out), channel="LA01",
                     start_time="2020-09-24 13:12:36", end_time="2020-09-24 13:12:38",
                     y_range=100, y_unit="uV")
 
@@ -238,17 +242,17 @@ def test_render_writes_a_png_for_montage(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     out = tmp_path / "figure.png"
 
-    template.render(src, str(out), channel="F7", channel2="F8", **_OK)
+    template.render(src, str(out), channel="LA01", channel2="LA02", **_OK)
 
     assert out.read_bytes().startswith(b"\x89PNG")
 
 
 def test_render_channel_match_is_case_insensitive(tmp_path):
-    # "Fp1" resolves to the file's label "FP1".
+    # "La03" resolves to the file's label "LA03".
     src = _write_edf(tmp_path / "rec.edf")
     out = tmp_path / "figure.png"
 
-    template.render(src, str(out), channel="Fp1", **_OK)
+    template.render(src, str(out), channel="La03", **_OK)
 
     assert out.read_bytes().startswith(b"\x89PNG")
 
@@ -258,7 +262,7 @@ def test_render_accepts_explicit_y_range_pair(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     out = tmp_path / "figure.png"
 
-    template.render(src, str(out), channel="F7",
+    template.render(src, str(out), channel="LA01",
                     start_time=0, duration=2, time_unit="s",
                     y_range=[-100, 115], y_unit="uV")
 
@@ -273,13 +277,13 @@ def test_render_raises_on_non_edf_extension(tmp_path):
     bad = tmp_path / "notes.txt"
     bad.write_text("not an edf")
     with pytest.raises(RuntimeError):
-        template.render(str(bad), str(tmp_path / "figure.png"), channel="F7", **_OK)
+        template.render(str(bad), str(tmp_path / "figure.png"), channel="LA01", **_OK)
 
 
 def test_render_raises_when_file_missing(tmp_path):
     with pytest.raises(RuntimeError):
         template.render(str(tmp_path / "nope.edf"), str(tmp_path / "figure.png"),
-                        channel="F7", **_OK)
+                        channel="LA01", **_OK)
 
 
 def test_render_raises_on_unknown_channel(tmp_path):
@@ -302,14 +306,14 @@ def test_render_raises_when_channel_missing(tmp_path):
 def test_render_raises_when_start_missing(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         duration=2, time_unit="s", y_range=100, y_unit="uV")
 
 
 def test_render_raises_when_no_end_or_duration(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, time_unit="s", y_range=100, y_unit="uV")
 
 
@@ -317,7 +321,7 @@ def test_render_raises_when_end_and_duration_disagree(tmp_path):
     # Both are allowed together only when they imply the same window.
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, end_time=5, duration=3, time_unit="s",
                         y_range=100, y_unit="uV")
 
@@ -327,14 +331,14 @@ def test_render_raises_when_time_unit_missing_for_numeric(tmp_path):
     # clock-string happy path above, which needs none).
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, duration=2, y_range=100, y_unit="uV")
 
 
 def test_render_raises_on_bad_time_unit(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, duration=2, time_unit="parsecs",
                         y_range=100, y_unit="uV")
 
@@ -352,7 +356,7 @@ def test_render_defaults_y_unit_to_file_header(monkeypatch, tmp_path):
     ylabels = _spy_first_arg(monkeypatch, "set_ylabel")
     out = tmp_path / "figure.png"
 
-    template.render(src, str(out), channel="F7",
+    template.render(src, str(out), channel="LA01",
                     start_time=0, duration=2, time_unit="s", y_range=100)
 
     assert out.read_bytes().startswith(b"\x89PNG")
@@ -364,7 +368,7 @@ def test_render_raises_on_unrecognized_header_unit(tmp_path):
     # to fall back to.
     src = _write_edf(tmp_path / "rec.edf", dimension="degC")
     with pytest.raises(RuntimeError, match="not a recognized voltage unit"):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, duration=2, time_unit="s", y_range=100)
 
 
@@ -373,14 +377,14 @@ def test_render_raises_on_unrecognized_header_unit_despite_y_unit(tmp_path):
     # header unit to convert samples, so it fails with the same message.
     src = _write_edf(tmp_path / "rec.edf", dimension="degC")
     with pytest.raises(RuntimeError, match="not a recognized voltage unit"):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7", **_OK)
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01", **_OK)
 
 
 def test_render_raises_on_bad_y_unit(tmp_path):
     # A supplied y_unit must still be a voltage unit.
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, duration=2, time_unit="s",
                         y_range=100, y_unit="amperes")
 
@@ -390,7 +394,7 @@ def test_render_auto_scales_when_y_range_missing(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     out = tmp_path / "figure.png"
 
-    template.render(src, str(out), channel="F7",
+    template.render(src, str(out), channel="LA01",
                     start_time=0, duration=2, time_unit="s", y_unit="uV")
 
     assert out.read_bytes().startswith(b"\x89PNG")
@@ -401,7 +405,7 @@ def test_render_y_range_without_y_unit_uses_header_unit(monkeypatch, tmp_path):
     src = _write_edf(tmp_path / "rec.edf")   # header dimension is "uV"
     ylim_calls = _spy_ylim(monkeypatch)
 
-    template.render(src, str(tmp_path / "figure.png"), channel="F7",
+    template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                     start_time=0, duration=2, time_unit="s", y_range=100)
 
     assert (-100.0, 100.0) in ylim_calls     # ±100 in the header's µV
@@ -410,7 +414,7 @@ def test_render_y_range_without_y_unit_uses_header_unit(monkeypatch, tmp_path):
 def test_render_raises_when_y_range_min_not_below_max(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, duration=2, time_unit="s",
                         y_range=[10, 2], y_unit="uV")
 
@@ -423,7 +427,7 @@ def test_render_raises_when_y_range_min_not_below_max(tmp_path):
 def test_render_raises_when_start_past_recording(tmp_path):
     src = _write_edf(tmp_path / "rec.edf", seconds=20)
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=25, duration=1, time_unit="s",
                         y_range=100, y_unit="uV")
 
@@ -431,7 +435,7 @@ def test_render_raises_when_start_past_recording(tmp_path):
 def test_render_raises_when_end_past_recording(tmp_path):
     src = _write_edf(tmp_path / "rec.edf", seconds=20)
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, duration=25, time_unit="s",
                         y_range=100, y_unit="uV")
 
@@ -439,16 +443,16 @@ def test_render_raises_when_end_past_recording(tmp_path):
 def test_render_raises_when_start_after_end(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=10, end_time=5, time_unit="s",
                         y_range=100, y_unit="uV")
 
 
 def test_render_raises_when_duration_over_max(tmp_path):
     # Needs a recording longer than MAX_DURATION_S so only the cap can fail.
-    src = _write_edf(tmp_path / "long.edf", labels=("F7", "F8"), fs=32, seconds=650)
+    src = _write_edf(tmp_path / "long.edf", labels=("LA01", "LA02"), fs=32, seconds=650)
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, duration=template.MAX_DURATION_S + 5,
                         time_unit="s", y_range=100, y_unit="uV")
 
@@ -456,7 +460,7 @@ def test_render_raises_when_duration_over_max(tmp_path):
 def test_render_raises_when_window_too_short(tmp_path):
     src = _write_edf(tmp_path / "rec.edf", fs=256)
     with pytest.raises(RuntimeError):
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, duration=0.01, time_unit="s",
                         y_range=100, y_unit="uV")  # ~3 samples < MIN_SAMPLES
 
@@ -466,26 +470,26 @@ def test_render_raises_when_window_too_short(tmp_path):
 #    Rules specific to the two-channel (bipolar A-B) mode.
 # ---------------------------------------------------------------------------
 def test_render_raises_on_montage_same_channel(tmp_path):
-    # Compared case-insensitively: F7 vs f7 is still the same channel.
+    # Compared case-insensitively: LA01 vs la01 is still the same channel.
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
         template.render(src, str(tmp_path / "figure.png"),
-                        channel="F7", channel2="f7", **_OK)
+                        channel="LA01", channel2="la01", **_OK)
 
 
 def test_render_raises_on_montage_unknown_channel2(tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):
         template.render(src, str(tmp_path / "figure.png"),
-                        channel="F7", channel2="ZZ9", **_OK)
+                        channel="LA01", channel2="ZZ9", **_OK)
 
 
 def test_render_raises_on_montage_rate_mismatch(tmp_path):
-    src = _write_edf(tmp_path / "mix.edf", labels=("F7", "F8"),
+    src = _write_edf(tmp_path / "mix.edf", labels=("LA01", "LA02"),
                      freqs=[256, 128], seconds=10)
     with pytest.raises(RuntimeError):
         template.render(src, str(tmp_path / "figure.png"),
-                        channel="F7", channel2="F8", **_OK)
+                        channel="LA01", channel2="LA02", **_OK)
 
 
 # ---------------------------------------------------------------------------
@@ -507,11 +511,11 @@ def test_render_montage_plots_the_difference(monkeypatch, tmp_path):
 
     monkeypatch.setattr(matplotlib.axes.Axes, "plot", spy_plot)
 
-    template.render(src, str(tmp_path / "a.png"), channel="F7", **_OK)
+    template.render(src, str(tmp_path / "a.png"), channel="LA01", **_OK)
     y_a = captured["y"]
-    template.render(src, str(tmp_path / "b.png"), channel="F8", **_OK)
+    template.render(src, str(tmp_path / "b.png"), channel="LA02", **_OK)
     y_b = captured["y"]
-    template.render(src, str(tmp_path / "m.png"), channel="F7", channel2="F8", **_OK)
+    template.render(src, str(tmp_path / "m.png"), channel="LA01", channel2="LA02", **_OK)
     y_m = captured["y"]
 
     assert np.allclose(y_m, y_a - y_b)
@@ -522,11 +526,11 @@ def test_render_title_reflects_mode(monkeypatch, tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     titles = _spy_first_arg(monkeypatch, "set_title")
 
-    template.render(src, str(tmp_path / "s.png"), channel="F7", **_OK)
-    template.render(src, str(tmp_path / "m.png"), channel="F7", channel2="F8", **_OK)
+    template.render(src, str(tmp_path / "s.png"), channel="LA01", **_OK)
+    template.render(src, str(tmp_path / "m.png"), channel="LA01", channel2="LA02", **_OK)
 
-    assert titles[0] == "Processed timeseries for channel F7"
-    assert titles[1] == "Processed timeseries for montage F7-F8"
+    assert titles[0] == "Processed timeseries for channel LA01"
+    assert titles[1] == "Processed timeseries for montage LA01-LA02"
 
 
 def test_render_x_label_follows_input_format(monkeypatch, tmp_path):
@@ -534,12 +538,12 @@ def test_render_x_label_follows_input_format(monkeypatch, tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     labels = _spy_first_arg(monkeypatch, "set_xlabel")
 
-    template.render(src, str(tmp_path / "s.png"), channel="F7",
+    template.render(src, str(tmp_path / "s.png"), channel="LA01",
                     start_time=0, duration=2, time_unit="s", y_range=100, y_unit="uV")
-    template.render(src, str(tmp_path / "u.png"), channel="F7",
+    template.render(src, str(tmp_path / "u.png"), channel="LA01",
                     start_time=0, end_time=1_000_000, time_unit="usec",
                     y_range=100, y_unit="uV")
-    template.render(src, str(tmp_path / "c.png"), channel="F7",
+    template.render(src, str(tmp_path / "c.png"), channel="LA01",
                     start_time="13:12:36", end_time="13:12:38",
                     y_range=100, y_unit="uV")
 
@@ -555,9 +559,9 @@ def test_render_clock_axis_names_the_date_only_across_midnight(monkeypatch, tmp_
     src = _write_edf(tmp_path / "rec.edf", start=datetime(2020, 9, 24, 23, 59, 55))
     labels = _spy_first_arg(monkeypatch, "set_xlabel")
 
-    template.render(src, str(tmp_path / "same.png"), channel="F7",
+    template.render(src, str(tmp_path / "same.png"), channel="LA01",
                     start_time="23:59:56", end_time="23:59:58", y_range=100, y_unit="uV")
-    template.render(src, str(tmp_path / "cross.png"), channel="F7",
+    template.render(src, str(tmp_path / "cross.png"), channel="LA01",
                     start_time="23:59:56", end_time="00:00:02", y_range=100, y_unit="uV")
 
     assert labels == ["time (h:m:s, local)", "time (h:m:s, local, from 2020-09-24)"]
@@ -572,7 +576,7 @@ def test_render_pipeline_highpass_writes_a_png(tmp_path):
     # A filter pipeline still produces a PNG; the trace stays voltage.
     src = _write_edf(tmp_path / "rec.edf")
     out = tmp_path / "figure.png"
-    template.render(src, str(out), channel="F7",
+    template.render(src, str(out), channel="LA01",
                     start_time=0, duration=5, time_unit="s", y_range=200, y_unit="uV",
                     pipeline=[{"tool": "highpass_filter", "params": {"cutoff": 1.0}}])
     assert out.read_bytes().startswith(b"\x89PNG")
@@ -583,7 +587,7 @@ def test_render_pipeline_energy_relabels_y_axis(monkeypatch, tmp_path):
     src = _write_edf(tmp_path / "rec.edf")
     ylabels = _spy_first_arg(monkeypatch, "set_ylabel")
 
-    template.render(src, str(tmp_path / "figure.png"), channel="F7",
+    template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                     start_time=0, duration=5, time_unit="s", y_range=200, y_unit="uV",
                     pipeline=[{"tool": "energy",
                                "params": {"window_size": 0.5, "window_stride": 0.5}}])
@@ -595,7 +599,7 @@ def test_render_pipeline_unknown_tool_raises(tmp_path):
     # An invalid pipeline raises — surfaced, not silently ignored.
     src = _write_edf(tmp_path / "rec.edf")
     with pytest.raises(RuntimeError):   # ToolInputError subclasses RuntimeError
-        template.render(src, str(tmp_path / "figure.png"), channel="F7",
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                         start_time=0, duration=2, time_unit="s", y_range=100, y_unit="uV",
                         pipeline=[{"tool": "no_such_tool"}])
 
@@ -610,7 +614,7 @@ def test_render_pipeline_psd_labels_both_axes(monkeypatch, tmp_path):
     xlabels = _spy_first_arg(monkeypatch, "set_xlabel")
     ylabels = _spy_first_arg(monkeypatch, "set_ylabel")
 
-    template.render(src, str(tmp_path / "figure.png"), channel="F7",
+    template.render(src, str(tmp_path / "figure.png"), channel="LA01",
                     start_time=0, duration=5, time_unit="s", y_range=200, y_unit="uV",
                     pipeline=[{"tool": "psd", "params": {}}])
 
@@ -625,12 +629,12 @@ def test_render_pipeline_psd_does_not_apply_y_range(monkeypatch, tmp_path):
     ylim_calls = _spy_ylim(monkeypatch)
 
     # Positive control: a raw trace DOES clamp y to the requested ±100 µV.
-    template.render(src, str(tmp_path / "raw.png"), channel="F7", **_OK)
+    template.render(src, str(tmp_path / "raw.png"), channel="LA01", **_OK)
     assert (-100.0, 100.0) in ylim_calls
 
     # A psd pipeline must not receive that voltage range.
     ylim_calls.clear()
-    template.render(src, str(tmp_path / "psd.png"), channel="F7",
+    template.render(src, str(tmp_path / "psd.png"), channel="LA01",
                     start_time=0, duration=5, time_unit="s", y_range=100, y_unit="uV",
                     pipeline=[{"tool": "psd", "params": {}}])
     assert (-100.0, 100.0) not in ylim_calls
@@ -641,9 +645,67 @@ def test_render_pipeline_fft_writes_a_png_with_magnitude_axis(monkeypatch, tmp_p
     ylabels = _spy_first_arg(monkeypatch, "set_ylabel")
     out = tmp_path / "figure.png"
 
-    template.render(src, str(out), channel="F7",
+    template.render(src, str(out), channel="LA01",
                     start_time=0, duration=5, time_unit="s", y_range=200, y_unit="uV",
                     pipeline=[{"tool": "fft", "params": {}}])
 
     assert out.read_bytes().startswith(b"\x89PNG")
     assert ylabels[-1] == "magnitude (µV)"
+
+
+# ---------------------------------------------------------------------------
+# 10. MODALITY
+#     The template is for intracranial recordings (SUPPORTED_MODALITIES).
+#     A file whose channel names look like scalp EEG is refused with a
+#     message naming the names; an explicit `modality` overrides the guess
+#     either way; names nobody can place are let through.
+# ---------------------------------------------------------------------------
+_SCALP = ("Fp1", "Fp2", "F7", "F3", "Fz", "F4", "F8", "Cz", "O1", "O2")
+
+
+def test_template_declares_its_modalities():
+    assert template.SUPPORTED_MODALITIES == ("ieeg",)
+
+
+def test_render_refuses_a_scalp_eeg_file(tmp_path):
+    src = _write_edf(tmp_path / "scalp.edf", labels=_SCALP)
+    with pytest.raises(PlotInvalidInputError) as ei:
+        template.render(src, str(tmp_path / "figure.png"), channel="Fp1", **_OK)
+    assert ei.value.error_code is PlotErrorCode.UNSUPPORTED_MODALITY
+    assert str(ei.value) == ("This file looks like scalp EEG (Fp1, Fp2, F7, F3, …); this "
+                             "template is for intracranial (iEEG) recordings. "
+                             "Pass modality=ieeg to override.")
+    assert ei.value.error_facts == {"modality": "eeg", "supported_modalities": ["ieeg"],
+                                    "detected": True}
+
+
+def test_render_modality_argument_overrides_the_guess(tmp_path):
+    src = _write_edf(tmp_path / "scalp.edf", labels=_SCALP)
+    out = tmp_path / "figure.png"
+    template.render(src, str(out), channel="Fp1", modality="ieeg", **_OK)
+    assert out.read_bytes().startswith(b"\x89PNG")
+
+
+def test_render_refuses_an_explicit_other_modality(tmp_path):
+    # Said to be EEG, even though the names look intracranial: the user's
+    # word wins, and the message does not suggest overriding it.
+    src = _write_edf(tmp_path / "rec.edf")
+    with pytest.raises(PlotInvalidInputError, match="Choose a template for that modality") as ei:
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01", modality="EEG", **_OK)
+    assert ei.value.error_code is PlotErrorCode.UNSUPPORTED_MODALITY
+    assert ei.value.error_facts["detected"] is False
+
+
+def test_render_rejects_an_unknown_modality_value(tmp_path):
+    src = _write_edf(tmp_path / "rec.edf")
+    with pytest.raises(PlotInvalidInputError, match="not one of: ieeg, eeg") as ei:
+        template.render(src, str(tmp_path / "figure.png"), channel="LA01", modality="meg", **_OK)
+    assert ei.value.error_code is PlotErrorCode.INVALID_ARGUMENT
+
+
+def test_render_lets_an_unplaceable_file_through(tmp_path):
+    # Only channels nobody can classify: no confident guess, so no refusal.
+    src = _write_edf(tmp_path / "odd.edf", labels=("EKG", "Pulse", "Event"))
+    out = tmp_path / "figure.png"
+    template.render(src, str(out), channel="EKG", **_OK)
+    assert out.read_bytes().startswith(b"\x89PNG")

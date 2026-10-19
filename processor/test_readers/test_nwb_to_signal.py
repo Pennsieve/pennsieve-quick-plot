@@ -114,6 +114,10 @@ def test_load_signal_dispatches_nwb(tmp_path):
     assert ".nwb" in readers.supported_extensions()
 
 
+def test_channel_names_from_the_header_alone(tmp_path):
+    assert readers.channel_names(_write_nwb(tmp_path / "rec.nwb")) == ("LA01", "LA02", "LA03")
+
+
 def test_unreadable_file_is_data_unavailable(tmp_path):
     bad = tmp_path / "rec.nwb"
     bad.write_text("not an hdf5 file")

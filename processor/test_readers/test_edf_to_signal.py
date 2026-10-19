@@ -122,6 +122,10 @@ def test_supported_extensions_lists_edf():
     assert ".edf" in readers.supported_extensions()
 
 
+def test_channel_names_from_the_header_alone(tmp_path):
+    assert readers.channel_names(_write_edf(tmp_path / "rec.edf")) == ("F7", "F8", "FP1")
+
+
 # ---------------------------------------------------------------------------
 # 2. HEADER
 # ---------------------------------------------------------------------------

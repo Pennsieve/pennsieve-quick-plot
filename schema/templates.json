@@ -27,14 +27,14 @@
           "type": "string",
           "required": true,
           "unit": "",
-          "description": "channel/label name, e.g. \"F8\", \"EKG2\""
+          "description": "channel/label name, e.g. \"LA01\", \"RAH3\""
         },
         {
           "name": "channel2",
           "type": "string",
           "required": false,
           "unit": "",
-          "description": "second channel; when given, the trace is the bipolar montage channel-channel2 (e.g. \"F7\"-\"F8\"). Both channels must share a sampling rate"
+          "description": "second channel; when given, the trace is the bipolar montage channel-channel2 (e.g. \"LA01\"-\"LA02\"). Both channels must share a sampling rate"
         },
         {
           "name": "start_time",
@@ -77,10 +77,17 @@
           "required": false,
           "unit": "",
           "description": "voltage unit the y-axis / y_range are displayed in (V, mV, uV, nV); omit to use the unit the file itself declares for the channel"
+        },
+        {
+          "name": "modality",
+          "type": "string",
+          "required": false,
+          "unit": "",
+          "description": "what the recording is: \"ieeg\" (intracranial) or \"eeg\" (scalp). Omit to detect it from the channel names; pass it when the detection is wrong or the dataset says (BIDS). This template draws ieeg"
         }
       ],
       "example_args": {
-        "channel": "F8",
+        "channel": "LA01",
         "start_time": 10,
         "duration": 5,
         "time_unit": "s",
