@@ -14,82 +14,6 @@
       "notes": ""
     },
     {
-      "name": "edf_processed_timeseries",
-      "extensions": [
-        ".edf"
-      ],
-      "summary": "voltage trace for one channel, or a bipolar montage of two channels, over a chosen time window, with optional DSP processing (scalp EEG / intracranial iEEG); \"plot channel F8 from 10s to 15s\", \"show the F7-F8 montage for the first minute\"",
-      "needs_args": true,
-      "pipeline_tools": "ts_dsp",
-      "args": [
-        {
-          "name": "channel",
-          "type": "string",
-          "required": true,
-          "unit": "",
-          "description": "channel/label name, e.g. \"F8\", \"EKG2\""
-        },
-        {
-          "name": "channel2",
-          "type": "string",
-          "required": false,
-          "unit": "",
-          "description": "second channel; when given, the trace is the bipolar montage channel-channel2 (e.g. \"F7\"-\"F8\"). Both channels must share a sampling rate"
-        },
-        {
-          "name": "start_time",
-          "type": "number or \"HH:MM:SS\" string",
-          "required": true,
-          "unit": "",
-          "description": "window start: a number (in `time_unit`) OR a wall-clock \"HH:MM:SS\" string"
-        },
-        {
-          "name": "end_time",
-          "type": "number or \"HH:MM:SS\" string",
-          "required": false,
-          "unit": "",
-          "description": "window end; provide EXACTLY ONE of end_time / duration"
-        },
-        {
-          "name": "duration",
-          "type": "number",
-          "required": false,
-          "unit": "",
-          "description": "window length in `time_unit`; provide EXACTLY ONE of end_time / duration"
-        },
-        {
-          "name": "time_unit",
-          "type": "string",
-          "required": false,
-          "unit": "",
-          "description": "unit for NUMERIC start/end/duration values (us, ms, s, min, h). REQUIRED whenever any of those is a plain number; omit only when all times are \"HH:MM:SS\" clock strings"
-        },
-        {
-          "name": "y_range",
-          "type": "positive number or [min, max] pair",
-          "required": false,
-          "unit": "",
-          "description": "y-axis extent: a single positive number N for a symmetric [-N, +N], or an explicit [min, max] pair; omit to auto-scale the y-axis to the data. Recommended for raw voltage traces (EEG is conventionally read at a fixed scale); ignored when the pipeline moves the y-axis off voltage (e.g. fft, psd, energy)"
-        },
-        {
-          "name": "y_unit",
-          "type": "string",
-          "required": false,
-          "unit": "",
-          "description": "voltage unit the y-axis / y_range are displayed in (V, mV, uV, nV); omit to use the unit the file itself declares for the channel"
-        }
-      ],
-      "example_args": {
-        "channel": "F8",
-        "start_time": 10,
-        "duration": 5,
-        "time_unit": "s",
-        "y_range": 200,
-        "y_unit": "uV"
-      },
-      "notes": "There are NO silent defaults for the data selection: a missing channel, time, or time_unit (for numeric times) makes the canned render fail (it then falls back to the agent). y_range and y_unit are display settings with truthful defaults: omitted y_range auto-scales the y-axis, and omitted y_unit displays in the unit the file itself declares. The window may not exceed 600 s."
-    },
-    {
       "name": "fcs_channel_histograms",
       "extensions": [
         ".fcs"
@@ -136,6 +60,90 @@
       "args": [],
       "example_args": null,
       "notes": ""
+    },
+    {
+      "name": "ieeg_processed_timeseries",
+      "extensions": [
+        ".edf",
+        ".nwb"
+      ],
+      "summary": "voltage trace for one channel, or a bipolar montage of two channels, of an intracranial iEEG recording in EDF or NWB (NWB as written by the MEF converter), over a chosen time window, with optional DSP processing; \"plot channel LA01 from 10s to 15s\", \"show the LA01-LA02 montage for the first minute\"",
+      "needs_args": true,
+      "pipeline_tools": "ts_dsp",
+      "args": [
+        {
+          "name": "channel",
+          "type": "string",
+          "required": true,
+          "unit": "",
+          "description": "channel/label name, e.g. \"LA01\", \"RAH3\""
+        },
+        {
+          "name": "channel2",
+          "type": "string",
+          "required": false,
+          "unit": "",
+          "description": "second channel; when given, the trace is the bipolar montage channel-channel2 (e.g. \"LA01\"-\"LA02\"). Both channels must share a sampling rate"
+        },
+        {
+          "name": "start_time",
+          "type": "number, \"HH:MM:SS\" or \"YYYY-MM-DD HH:MM:SS\" string",
+          "required": true,
+          "unit": "",
+          "description": "window start: a number (in `time_unit`, from the recording start), a wall-clock \"HH:MM:SS\" on the recording's start day, or a full \"YYYY-MM-DD HH:MM:SS\" for multi-day recordings; clock and date values are read on the recording's own clock"
+        },
+        {
+          "name": "end_time",
+          "type": "number, \"HH:MM:SS\" or \"YYYY-MM-DD HH:MM:SS\" string",
+          "required": false,
+          "unit": "",
+          "description": "window end, in the same forms as start_time; provide EXACTLY ONE of end_time / duration"
+        },
+        {
+          "name": "duration",
+          "type": "number",
+          "required": false,
+          "unit": "",
+          "description": "window length in `time_unit`; provide EXACTLY ONE of end_time / duration"
+        },
+        {
+          "name": "time_unit",
+          "type": "string",
+          "required": false,
+          "unit": "",
+          "description": "unit for NUMERIC start/end/duration values (us, ms, s, min, h). REQUIRED whenever any of those is a plain number; omit only when all times are clock or date strings"
+        },
+        {
+          "name": "y_range",
+          "type": "positive number or [min, max] pair",
+          "required": false,
+          "unit": "",
+          "description": "y-axis extent: a single positive number N for a symmetric [-N, +N], or an explicit [min, max] pair; omit to auto-scale the y-axis to the data. Recommended for raw voltage traces (EEG is conventionally read at a fixed scale); ignored when the pipeline moves the y-axis off voltage (e.g. fft, psd, energy)"
+        },
+        {
+          "name": "y_unit",
+          "type": "string",
+          "required": false,
+          "unit": "",
+          "description": "voltage unit the y-axis / y_range are displayed in (V, mV, uV, nV); omit to use the unit the file itself declares for the channel"
+        },
+        {
+          "name": "modality",
+          "type": "string",
+          "required": false,
+          "unit": "",
+          "description": "what the recording is: \"ieeg\" (intracranial) or \"eeg\" (scalp). Omit to detect it from the channel names; pass it when the detection is wrong or the dataset says (BIDS). This template draws ieeg"
+        }
+      ],
+      "example_args": {
+        "channel": "LA01",
+        "start_time": 10,
+        "duration": 5,
+        "time_unit": "s",
+        "y_range": 200,
+        "y_unit": "uV"
+      },
+      "notes": "There are NO silent defaults for the data selection: a missing channel, time, or time_unit (for numeric times) makes the canned render fail (it then falls back to the agent). y_range and y_unit are display settings with truthful defaults: omitted y_range auto-scales the y-axis, and omitted y_unit displays in the unit the file itself declares. The window may not exceed 600 s."
     },
     {
       "name": "tsv_sessions_lineplot",

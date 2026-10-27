@@ -45,7 +45,7 @@ def env(monkeypatch, tmp_path):
     (inp / "rec.edf").write_bytes(b"x")
     monkeypatch.setenv("INPUT_DIR", str(inp))
     monkeypatch.setenv("OUTPUT_DIR", str(out))
-    monkeypatch.setenv("TEMPLATE", "edf_processed_timeseries")
+    monkeypatch.setenv("TEMPLATE", "ieeg_processed_timeseries")
     monkeypatch.setenv("PROMPT", "plot it")
     monkeypatch.delenv("STUB_MODE", raising=False)
     monkeypatch.setattr(main_mod, "STUB_MODE", False)
@@ -86,7 +86,7 @@ def test_user_actionable_template_error_fails_fast(monkeypatch, env, err):
     assert ei.value is err
     assert calls == []                              # agent never ran
     assert r.fallback_trigger_error is None         # it IS the error, not a side note
-    assert r.requested_template == "edf_processed_timeseries"
+    assert r.requested_template == "ieeg_processed_timeseries"
 
 
 # ---- Scenario 3: the template fails for a platform reason --------------------
@@ -149,8 +149,8 @@ def test_unknown_template_is_invalid_input(monkeypatch, tmp_path):
     assert isinstance(out.error, PlotInvalidInputError)
     assert out.error.error_code is PlotErrorCode.UNKNOWN_TEMPLATE
     assert out.error.source_stage is PlotErrorStage.TEMPLATE
-    assert "edf_processed_timeseries" in out.error.user_message
-    assert "edf_processed_timeseries" in out.error.error_facts["known_templates"]
+    assert "ieeg_processed_timeseries" in out.error.user_message
+    assert "ieeg_processed_timeseries" in out.error.error_facts["known_templates"]
 
 
 def _canned_with(monkeypatch, tmp_path, exc):

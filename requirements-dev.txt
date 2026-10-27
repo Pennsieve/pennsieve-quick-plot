@@ -18,6 +18,11 @@ matplotlib
 # lives on the EFS layer in production.
 pyedflib
 
+# NWB reader (readers/nwb_to_signal.py) reads the HDF5 datasets directly
+# with h5py — no pynwb, whose import alone costs ~15 s on a cold Lambda.
+# Also on the EFS layer in production.
+h5py
+
 # ts_dsp DSP tools: scipy provides the Butterworth filter (highpass_filter).
 # Also on the EFS layer in production.
 scipy

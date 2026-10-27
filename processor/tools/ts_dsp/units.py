@@ -1,10 +1,14 @@
 """
-ts_dsp.units — time and voltage unit vocabulary.
+ts_dsp.units — time and voltage unit vocabulary, and the time-point rules.
 
 The user may type "usec", "microseconds" or "µs"; the EDF header may declare
 "uV" or "mV". These helpers turn any accepted spelling into a numeric factor
 (to seconds / to volts) plus one canonical display symbol, so labels read the
-same regardless of how the unit was spelled. Also the H:M:S clock helpers.
+same regardless of how the unit was spelled.
+
+A time input (start_time, end_time) can be written three ways; the rules for
+reading them and anchoring them to a recording live here too, so every
+reader resolves them the same way (see TIME POINTS below).
 
 Used by the template (parsing the user's inputs), the readers (interpreting
 the file header) and the plot stage (tick labels). Standard library only.
@@ -12,7 +16,15 @@ the file header) and the plot stage (tick labels). Standard library only.
 
 from __future__ import annotations
 
-from processor.errors import PlotErrorCode, PlotInvalidInputError
+from dataclasses import dataclass
+from datetime import datetime
+
+from processor.errors import (
+    PlotDataUnavailableError,
+    PlotErrorCode,
+    PlotErrorStage,
+    PlotInvalidInputError,
+)
 
 
 ############# UNIT TABLES ##################
@@ -108,7 +120,9 @@ def resolve_volt_unit(unit: str | None, *, required: bool = True) -> tuple[float
 
 ############# CLOCK TIME ##################
 def is_clock_string(value: "object") -> bool:
-    """True for an 'H:M:S'-style string (as opposed to a plain number)."""
+    """True for an 'H:M:S' or 'YYYY-MM-DD H:M:S' string (as opposed to a
+    plain number). Such a value carries its own unit, so no time_unit is
+    needed for it."""
     return isinstance(value, str) and ":" in value
 
 
@@ -138,3 +152,136 @@ def seconds_to_clock(seconds: float) -> str:
     if abs(sec - round(sec)) < 1e-6:
         return f"{h:d}:{m:02d}:{int(round(sec)):02d}"
     return f"{h:d}:{m:02d}:{sec:06.3f}"
+
+
+def seconds_since_midnight(moment: datetime) -> float:
+    """A datetime -> its time of day in seconds (what the H:M:S helpers use)."""
+    return moment.hour * 3600.0 + moment.minute * 60.0 + moment.second + moment.microsecond / 1e6
+
+
+def clock_name(recording_start: "datetime | None") -> str:
+    """Which clock a recording's timestamps are on, for an axis label.
+
+    A naive start (EDF) is the recorder's own clock, so "local"; a
+    timezone-aware start (NWB stores UTC) names the zone.
+    """
+    if recording_start is None or recording_start.tzinfo is None:
+        return "local"
+    return recording_start.tzname() or "UTC"
+
+
+############# TIME POINTS ##################
+# A time input can be given three ways:
+#
+#   a number                   seconds from the recording start, once scaled
+#                              by time_unit (500 with time_unit="ms" -> 0.5)
+#   "HH:MM:SS"                 a time of day on the recording's own clock, on
+#                              the day the recording started — or the next
+#                              day, when it is earlier than the start clock
+#                              (a recording that began at 23:50 and a request
+#                              for 00:10 means twenty minutes in)
+#   "YYYY-MM-DD HH:MM:SS"      a full date and time on the recording's clock,
+#                              for recordings that run for days (fractional
+#                              seconds allowed; no timezone suffix)
+#
+# parse_time_point() reads the text without knowing the recording;
+# resolve_time_point() turns the result into seconds from the recording
+# start once a reader has the header. Both readers call the same two
+# functions, so a time means the same thing whatever the file format.
+
+RELATIVE = "relative"
+CLOCK = "clock"
+DATETIME = "datetime"
+
+
+@dataclass(frozen=True)
+class TimePoint:
+    """One time input after parsing, before it is anchored to a recording.
+
+    seconds   RELATIVE: seconds from the recording start (already scaled);
+              CLOCK:    seconds since midnight; DATETIME: unused
+    at        DATETIME: the moment itself (naive, on the recording's clock)
+    """
+    kind: str
+    seconds: float = 0.0
+    at: "datetime | None" = None
+
+    @property
+    def is_clock(self) -> bool:
+        """True when the value was typed as a clock or a date (it then
+        needs the recording's start timestamp to mean anything)."""
+        return self.kind != RELATIVE
+
+
+def _looks_like_date(text: str) -> bool:
+    # "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DDTHH:MM:SS": a 4-digit year, two
+    # dashes, then a separator before the clock part.
+    head = text[:11]
+    return (len(text) > 11 and head[4:5] == "-" and head[7:8] == "-"
+            and head[10:11] in (" ", "T") and head[:4].isdigit())
+
+
+def _parse_datetime(value: str, *, field: str) -> datetime:
+    text = str(value).strip().replace("T", " ", 1)
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise PlotInvalidInputError(
+            PlotErrorCode.INVALID_ARGUMENT,
+            f"{field} {value!r} is not a date and time in "
+            "YYYY-MM-DD HH:MM:SS format (e.g. '2020-09-24 13:12:36')."
+        ) from exc
+    if moment.tzinfo is not None:
+        raise PlotInvalidInputError(
+            PlotErrorCode.INVALID_ARGUMENT,
+            f"{field} {value!r} carries a timezone; give the time without one. "
+            "Times are read on the recording's own clock."
+        )
+    return moment
+
+
+def parse_time_point(value: "object", time_factor: float, *, field: str) -> TimePoint:
+    """A raw start_time / end_time value -> TimePoint.
+
+    `time_factor` scales a numeric value to seconds (from resolve_time_unit);
+    clock and date strings carry their own unit and ignore it.
+    """
+    if is_clock_string(value):
+        text = str(value).strip()
+        if _looks_like_date(text):
+            return TimePoint(DATETIME, at=_parse_datetime(text, field=field))
+        return TimePoint(CLOCK, seconds=clock_to_seconds(text))
+    try:
+        return TimePoint(RELATIVE, seconds=float(value) * time_factor)
+    except (TypeError, ValueError) as exc:
+        raise PlotInvalidInputError(
+            PlotErrorCode.INVALID_ARGUMENT, f"{field} {value!r} is not a number.") from exc
+
+
+def resolve_time_point(point: TimePoint, recording_start: "datetime | None", *, field: str) -> float:
+    """A TimePoint -> seconds from the recording start.
+
+    A relative value is already that. A clock or date value needs the
+    recording's start timestamp; a file without one is a data problem (the
+    user can still give the time in seconds). The result may be negative or
+    past the end of the recording — the caller checks the window as a whole.
+    """
+    if point.kind == RELATIVE:
+        return float(point.seconds)
+    if recording_start is None:
+        raise PlotDataUnavailableError(
+            PlotErrorCode.MISSING_REQUIRED_METADATA,
+            f"{field} was given as a clock time but the recording has no "
+            "start timestamp to anchor it to. Give the time in seconds instead.",
+            error_facts={"field": field},
+            source_stage=PlotErrorStage.READER,
+        )
+    if point.kind == CLOCK:
+        offset = float(point.seconds) - seconds_since_midnight(recording_start)
+        if offset < 0:
+            offset += 24 * 3600.0
+        return offset
+    # DATETIME: the user's naive moment is read on the recording's clock, so
+    # compare it with the start as a naive datetime of that same clock.
+    start = recording_start.replace(tzinfo=None)
+    return (point.at - start).total_seconds()

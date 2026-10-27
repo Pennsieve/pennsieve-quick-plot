@@ -93,8 +93,10 @@ class PlotErrorCode(str, Enum):
     UNKNOWN_CHANNEL = "unknown_channel"
     UNKNOWN_COLUMN = "unknown_column"
     INVALID_TIME_WINDOW = "invalid_time_window"
+    WINDOW_SPANS_GAP = "window_spans_gap"       # the recording has no data for part of the window
     UNSUPPORTED_UNIT = "unsupported_unit"
     INCOMPATIBLE_CHANNELS = "incompatible_channels"
+    UNSUPPORTED_MODALITY = "unsupported_modality"   # the template is not for this kind of recording
     UNKNOWN_TOOL = "unknown_tool"
     INVALID_TOOL_ARGUMENT = "invalid_tool_argument"
     INCOMPATIBLE_PIPELINE = "incompatible_pipeline"
@@ -135,8 +137,10 @@ CODES_BY_CATEGORY: dict[PlotErrorCategory, frozenset[PlotErrorCode]] = {
         PlotErrorCode.TEMPLATE_FAILED_NO_PROMPT, PlotErrorCode.MISSING_ARGUMENT,
         PlotErrorCode.INVALID_ARGUMENT, PlotErrorCode.UNKNOWN_ARGUMENT,
         PlotErrorCode.UNKNOWN_CHANNEL, PlotErrorCode.UNKNOWN_COLUMN,
-        PlotErrorCode.INVALID_TIME_WINDOW, PlotErrorCode.UNSUPPORTED_UNIT,
-        PlotErrorCode.INCOMPATIBLE_CHANNELS, PlotErrorCode.UNKNOWN_TOOL,
+        PlotErrorCode.INVALID_TIME_WINDOW, PlotErrorCode.WINDOW_SPANS_GAP,
+        PlotErrorCode.UNSUPPORTED_UNIT,
+        PlotErrorCode.INCOMPATIBLE_CHANNELS, PlotErrorCode.UNSUPPORTED_MODALITY,
+        PlotErrorCode.UNKNOWN_TOOL,
         PlotErrorCode.INVALID_TOOL_ARGUMENT, PlotErrorCode.INCOMPATIBLE_PIPELINE,
         PlotErrorCode.REQUEST_REJECTED,
     }),

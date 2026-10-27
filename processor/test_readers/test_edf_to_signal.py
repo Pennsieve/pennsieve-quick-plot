@@ -1,16 +1,16 @@
 """
 Tests for processor.readers — the file -> Signal step on its own.
 
-The template tests (test_templates/test_edf_processed_timeseries.py) drive
+The template tests (test_templates/test_ieeg_processed_timeseries.py) drive
 the whole render() path end to end. These tests pin the reader's own
 contract at its seams, so a change in how the file is read is caught here
 rather than as a mysterious template failure:
 
   1. DISPATCH          load_signal() picks the reader by extension
   2. HEADER            _read_header: metadata only, case-insensitive channels
-  3. WINDOW vs HEADER  _check_against_header: clock anchoring, limits, units
+  3. WINDOW vs HEADER  _check_against_header: clock/date anchoring, limits, units
   4. THE SIGNAL        what comes out: seconds from recording start, display
-                       voltage, montage difference, recording_start_clock_s
+                       voltage, montage difference, recording_start
 
 The synthetic EDF is written the same way as in the template tests (fixed
 sine per channel), so values are predictable.
@@ -31,7 +31,8 @@ import pytest
 from processor import readers
 from processor.errors import PlotDataUnavailableError, PlotErrorCode
 from processor.readers import edf_to_signal as reader
-from processor.templates.edf_processed_timeseries import RenderParams, TimePoint
+from processor.templates.ieeg_processed_timeseries import RenderParams
+from processor.tools.ts_dsp import TimePoint
 
 _START = datetime(2020, 9, 24, 13, 12, 36)
 _START_CLOCK_S = 13 * 3600 + 12 * 60 + 36
@@ -63,7 +64,7 @@ def _write_edf(path, labels=("F7", "F8", "FP1"), fs=256, seconds=20,
     return str(path)
 
 
-def _params(channel="F7", channel2=None, start=TimePoint(0.0, False),
+def _params(channel="F7", channel2=None, start=TimePoint("relative", 0.0),
             end=None, duration_s=2.0, volt=None, clock_mode=False) -> RenderParams:
     """A valid RenderParams with the reader-relevant fields filled in."""
     return RenderParams(
@@ -121,6 +122,10 @@ def test_supported_extensions_lists_edf():
     assert ".edf" in readers.supported_extensions()
 
 
+def test_channel_names_from_the_header_alone(tmp_path):
+    assert readers.channel_names(_write_edf(tmp_path / "rec.edf")) == ("F7", "F8", "FP1")
+
+
 # ---------------------------------------------------------------------------
 # 2. HEADER
 # ---------------------------------------------------------------------------
@@ -130,7 +135,7 @@ def test_read_header_is_metadata_only(tmp_path):
     assert header.fs["F8"] == 128.0
     assert header.duration_s["F8"] == pytest.approx(10.0)
     assert header.unit["F8"] == "uV"
-    assert header.start_clock_s == pytest.approx(_START_CLOCK_S)
+    assert header.start == _START
 
 
 def test_header_channel_lookup_is_case_insensitive(tmp_path):
@@ -150,23 +155,52 @@ def test_header_unknown_channel_lists_available(tmp_path):
 def test_clock_start_is_anchored_to_recording_start(tmp_path):
     header = reader._read_header(_write_edf(tmp_path / "rec.edf"))
     # 13:12:38 is two seconds after the recording began at 13:12:36.
-    p = _params(start=TimePoint(_START_CLOCK_S + 2, is_clock=True), duration_s=1.0, clock_mode=True)
+    p = _params(start=TimePoint("clock", _START_CLOCK_S + 2), duration_s=1.0, clock_mode=True)
     window = reader._check_against_header(p, header)
     assert window.start_s == pytest.approx(2.0)
     assert window.end_s == pytest.approx(3.0)
 
 
+def test_clock_before_start_clock_means_the_next_day(tmp_path):
+    # Scenario: the recording began at 23:59:50; "00:00:02" can only mean
+    # twelve seconds in, on the following day.
+    late = datetime(2020, 9, 24, 23, 59, 50)
+    header = reader._read_header(_write_edf(tmp_path / "rec.edf", start=late))
+    p = _params(start=TimePoint("clock", 2.0), duration_s=1.0, clock_mode=True)
+    assert reader._check_against_header(p, header).start_s == pytest.approx(12.0)
+
+
+def test_date_start_is_anchored_to_recording_start(tmp_path):
+    # A full date and time resolves against the header's start datetime, so
+    # it works across midnight where a bare clock time would be ambiguous.
+    late = datetime(2020, 9, 24, 23, 59, 50)
+    header = reader._read_header(_write_edf(tmp_path / "rec.edf", start=late))
+    p = _params(start=TimePoint("datetime", at=datetime(2020, 9, 25, 0, 0, 2)),
+                end=TimePoint("datetime", at=datetime(2020, 9, 25, 0, 0, 4)),
+                duration_s=None, clock_mode=True)
+    window = reader._check_against_header(p, header)
+    assert (window.start_s, window.end_s) == (pytest.approx(12.0), pytest.approx(14.0))
+
+
+def test_date_before_recording_start_is_rejected(tmp_path):
+    header = reader._read_header(_write_edf(tmp_path / "rec.edf"))
+    p = _params(start=TimePoint("datetime", at=datetime(2020, 9, 24, 13, 0, 0)),
+                duration_s=1.0, clock_mode=True)
+    with pytest.raises(RuntimeError, match="before the recording start"):
+        reader._check_against_header(p, header)
+
+
 def test_clock_start_without_recording_timestamp_raises(tmp_path):
     header = reader._read_header(_write_edf(tmp_path / "rec.edf"))
     header = header.__class__(header.labels, header.fs, header.duration_s, header.unit, None)
-    p = _params(start=TimePoint(_START_CLOCK_S, is_clock=True), duration_s=1.0, clock_mode=True)
+    p = _params(start=TimePoint("clock", _START_CLOCK_S), duration_s=1.0, clock_mode=True)
     with pytest.raises(RuntimeError, match="no start timestamp"):
         reader._check_against_header(p, header)
 
 
 def test_end_and_duration_must_agree(tmp_path):
     header = reader._read_header(_write_edf(tmp_path / "rec.edf"))
-    p = _params(start=TimePoint(0.0, False), end=TimePoint(5.0, False), duration_s=2.0)
+    p = _params(start=TimePoint("relative", 0.0), end=TimePoint("relative", 5.0), duration_s=2.0)
     with pytest.raises(RuntimeError, match="disagree"):
         reader._check_against_header(p, header)
 
@@ -204,7 +238,7 @@ def test_unrecognised_header_unit_raises(tmp_path):
 # ---------------------------------------------------------------------------
 def test_signal_time_is_seconds_from_recording_start(tmp_path):
     src = _write_edf(tmp_path / "rec.edf", fs=256)
-    sig = readers.load_signal(src, _params(start=TimePoint(3.0, False), duration_s=2.0))
+    sig = readers.load_signal(src, _params(start=TimePoint("relative", 3.0), duration_s=2.0))
     assert sig.x_unit == "s"
     assert sig.t[0] == pytest.approx(3.0)
     assert sig.t[-1] == pytest.approx(5.0 - 1 / 256)
@@ -229,7 +263,9 @@ def test_montage_is_channel_minus_channel2(tmp_path):
     assert np.allclose(m.y, a.y - b.y)
 
 
-def test_signal_carries_recording_start_clock(tmp_path):
+def test_signal_carries_recording_start(tmp_path):
+    # The full start datetime rides along (naive: the recorder's own clock),
+    # so the plot stage can draw H:M:S ticks and name the clock.
     sig = readers.load_signal(_write_edf(tmp_path / "rec.edf"), _params())
-    assert sig.recording_start_clock_s == pytest.approx(_START_CLOCK_S)
+    assert sig.recording_start == _START and sig.recording_start.tzinfo is None
     assert sig.y_domain == "amplitude"
