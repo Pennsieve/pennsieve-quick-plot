@@ -58,7 +58,7 @@ six==1.17.0
 statsmodels==0.14.6
 threadpoolctl==3.6.0
 tifffile==2026.6.1
-tornado==6.5.7
+tornado==6.6
 tqdm==4.68.3
 typing-extensions==4.15.0
 tzdata==2026.2
