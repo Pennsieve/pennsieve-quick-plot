@@ -24,7 +24,7 @@ Channel selection: scans `pnn_labels` for the first label starting with
 falls through to the agent loop.
 
 Deterministic: same input → same output bytes (matplotlib version pinned
-via the EFS layer). No randomness in bin edges or hexbin tessellation.
+via processor/stack-requirements.txt). No randomness in bin edges or hexbin tessellation.
 """
 
 from __future__ import annotations

@@ -81,7 +81,7 @@ def run_agent(
     target_file_path: str,
     output_path: str,
     workdir: str,
-    layer_site_packages: str,
+    stack_site_packages: str,
 ) -> AgentResult:
     """
     Run the agent loop until it produces `output_path` or hits the iteration cap.
@@ -93,7 +93,7 @@ def run_agent(
         in practice — passed explicitly so this module isn't path-aware).
       workdir: absolute path to a per-run scratch directory. The agent's bash
         tool runs with cwd=workdir; write_file accepts paths under here only.
-      layer_site_packages: absolute path to the EFS layer's `site-packages`
+      stack_site_packages: absolute path to the scientific stack's `site-packages`
         directory (matplotlib, pandas, fcsparser, etc.). Injected into the
         bash tool's PYTHONPATH so the agent can `import` the scientific stack.
 
@@ -187,7 +187,7 @@ def run_agent(
                 inputs=block.input,
                 workdir=workdir,
                 target_file_path=target_file_path,
-                layer_site_packages=layer_site_packages,
+                stack_site_packages=stack_site_packages,
             )
             tool_results.append({
                 "type": "tool_result",
@@ -296,7 +296,7 @@ def _run_tool(
     inputs: dict[str, Any],
     workdir: str,
     target_file_path: str,
-    layer_site_packages: str,
+    stack_site_packages: str,
 ) -> tuple[str, bool]:
     """Dispatch one tool_use block. Returns (result_text, is_error)."""
     try:
@@ -304,7 +304,7 @@ def _run_tool(
             return _tool_bash(
                 command=inputs.get("command", ""),
                 workdir=workdir,
-                layer_site_packages=layer_site_packages,
+                stack_site_packages=stack_site_packages,
             )
         if name == "read_file":
             return _tool_read_file(
@@ -325,7 +325,7 @@ def _run_tool(
         return f"Tool {name} raised: {type(e).__name__}: {e}", True
 
 
-def _tool_bash(command: str, workdir: str, layer_site_packages: str) -> tuple[str, bool]:
+def _tool_bash(command: str, workdir: str, stack_site_packages: str) -> tuple[str, bool]:
     """Run a shell command in the sandbox."""
     if not command.strip():
         return "Empty command.", True
@@ -341,10 +341,10 @@ def _tool_bash(command: str, workdir: str, layer_site_packages: str) -> tuple[st
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
     }
-    # PYTHONPATH = EFS layer + caller's existing PYTHONPATH (if any).
+    # PYTHONPATH = the scientific stack + caller's existing PYTHONPATH (if any).
     pythonpath_parts = []
-    if os.path.isdir(layer_site_packages):
-        pythonpath_parts.append(layer_site_packages)
+    if os.path.isdir(stack_site_packages):
+        pythonpath_parts.append(stack_site_packages)
     if os.environ.get("PYTHONPATH"):
         pythonpath_parts.append(os.environ["PYTHONPATH"])
     if pythonpath_parts:

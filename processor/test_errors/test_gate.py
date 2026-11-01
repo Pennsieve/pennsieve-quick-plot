@@ -61,7 +61,7 @@ def _agent_stub(monkeypatch, calls):
         return types.SimpleNamespace(success=True, output_size=99, iterations=2, final_text="", error="")
 
     monkeypatch.setattr(agent_mod, "run_agent", run_agent)
-    monkeypatch.setattr(exec_mod, "resolve_layer_site_packages", lambda: "/nonexistent")
+    monkeypatch.setattr(exec_mod, "resolve_stack_site_packages", lambda: "/nonexistent")
 
 
 # ---- Scenario 1: the policy itself -------------------------------------------
@@ -142,7 +142,7 @@ def test_template_success_skips_agent(monkeypatch, env):
 # the raise site set, and a plain exception gets wrapped and stamped "template".
 
 def test_unknown_template_is_invalid_input(monkeypatch, tmp_path):
-    monkeypatch.setattr(main_mod, "setup_layer_python_path", lambda: None)
+    monkeypatch.setattr(main_mod, "setup_stack_python_path", lambda: None)
     out = main_mod.try_canned_template({"template": "nope", "template_args": ""},
                                        str(tmp_path / "f.edf"), str(tmp_path / "o.png"))
     assert out.produced is False
@@ -162,7 +162,7 @@ def _canned_with(monkeypatch, tmp_path, exc):
             raise exc
 
     monkeypatch.setattr("processor.templates.get", lambda name: Boom())
-    monkeypatch.setattr(main_mod, "setup_layer_python_path", lambda: None)
+    monkeypatch.setattr(main_mod, "setup_stack_python_path", lambda: None)
     return main_mod.try_canned_template({"template": "boom", "template_args": ""},
                                         str(tmp_path / "f.edf"), str(tmp_path / "o.png"))
 

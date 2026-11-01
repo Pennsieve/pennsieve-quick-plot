@@ -17,8 +17,8 @@ module + one import line in `_REGISTRY` below; no MCP, workflow, or
 Lambda config change.
 
 Canned templates run in-process and import their format-specific deps
-from the shared EFS layer (`quick-plot-stack`), the same layer the agent
-loop uses. Heavy imports happen lazily inside each module's render()
+from the scientific stack in the image (/opt/plot-stack), the same stack the
+agent loop uses. Heavy imports happen lazily inside each module's render()
 function so an unrelated template choice doesn't pay the
 matplotlib/fcsparser cold-start tax.
 

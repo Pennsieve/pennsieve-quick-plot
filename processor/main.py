@@ -82,7 +82,7 @@ FAIL_FAST = frozenset({
 })
 
 # When set to "1", bypass the LLM entirely and use the built-in stub script
-# in processor/stub_script.py. Used for smoke-tests of the EFS layer mount +
+# in processor/stub_script.py. Used for smoke-tests of the scientific stack +
 # viewer-asset data-target chain without burning LLM tokens.
 STUB_MODE = os.environ.get("STUB_MODE", "") == "1"
 
@@ -161,12 +161,12 @@ def try_canned_template(config: dict, target_file_path: str, output_path: str) -
     if not template_name:
         return CannedOutcome()
 
-    # Put the EFS layer's site-packages on sys.path so the template's
+    # Put the scientific stack on sys.path so the template's
     # imports (fcsparser, matplotlib, etc.) resolve. The agent loop
     # doesn't need this because it runs its generated scripts as a
     # subprocess with PYTHONPATH set on the child env; the templates
     # import in-process and need the path on the parent interpreter.
-    setup_layer_python_path()
+    setup_stack_python_path()
 
     from processor.templates import get as get_template, known_names
 
@@ -237,27 +237,27 @@ def try_canned_template(config: dict, target_file_path: str, output_path: str) -
     ))
 
 
-def setup_layer_python_path() -> None:
+def setup_stack_python_path() -> None:
     """
-    Prepend the shared EFS layer's site-packages to sys.path so canned
-    templates can `import fcsparser` / `import matplotlib` directly.
-    Idempotent. Mirrors processor/executor.py's resolve_layer_site_packages
-    so both the agent's child PYTHONPATH and the canned in-process path
-    look at the same place on the same volume.
+    Prepend the scientific stack's site-packages (in the image,
+    /opt/plot-stack) to sys.path so canned templates can `import fcsparser`
+    / `import matplotlib` directly. Idempotent. Uses processor/executor.py's
+    resolve_stack_site_packages, so the agent's child PYTHONPATH and the
+    canned in-process path look at the same place.
     """
-    from processor.executor import resolve_layer_site_packages
+    from processor.executor import resolve_stack_site_packages
 
-    sp = resolve_layer_site_packages()
+    sp = resolve_stack_site_packages()
     if not os.path.isdir(sp):
         log.warning(
-            "Layer site-packages not found at %s — canned templates that "
+            "Scientific stack not found at %s — canned templates that "
             "need extra deps will fail on import (agent fallback unaffected).",
             sp,
         )
         return
     if sp not in sys.path:
         sys.path.insert(0, sp)
-        log.info("Added layer site-packages to sys.path: %s", sp)
+        log.info("Added the scientific stack to sys.path: %s", sp)
 
 
 def run(report: PlotRunReport | None = None):
@@ -343,7 +343,7 @@ def run(report: PlotRunReport | None = None):
             source_stage=PlotErrorStage.TEMPLATE)
 
     # Stub mode short-circuits the agent loop. Used to smoke-test the
-    # EFS-layer mount + viewer-asset attachment without the LLM in the loop.
+    # scientific stack + viewer-asset attachment without the LLM in the loop.
     if STUB_MODE:
         log.info("STUB_MODE=1 — bypassing agent, using built-in stub script")
         from processor.executor import execute_script
@@ -365,7 +365,7 @@ def run(report: PlotRunReport | None = None):
 
     # Agent loop — inspect + plot via tool calls.
     from processor.agent import run_agent
-    from processor.executor import resolve_layer_site_packages
+    from processor.executor import resolve_stack_site_packages
 
     log.info("Prompt: %s", config["prompt"])
 
@@ -379,7 +379,7 @@ def run(report: PlotRunReport | None = None):
         target_file_path=target_file_path,
         output_path=output_path,
         workdir=workdir,
-        layer_site_packages=resolve_layer_site_packages(),
+        stack_site_packages=resolve_stack_site_packages(),
     )
 
     if result.success:

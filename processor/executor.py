@@ -6,9 +6,9 @@ Why subprocess (not exec):
   - Easy timeout: subprocess.run(..., timeout=N) is straightforward
   - Easy capture of stderr separately from stdout for error feedback to the LLM
 
-The EFS layer `quick-plot-stack` is mounted read-only at /mnt/layers/quick-plot-stack/.
-Its Python site-packages are injected into the child process's PYTHONPATH so the
-script can import matplotlib, pandas, flowkit, etc.
+The scientific stack the scripts import (processor/stack-requirements.txt) is installed
+in the image at /opt/plot-stack and put on the child process's PYTHONPATH, so the
+script can import matplotlib, pandas, flowkit, etc. while the main process stays lean.
 """
 
 import logging
@@ -21,33 +21,17 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-# Location of the EFS layer's site-packages.
-#
-# Production: the platform injects `layersDir` in the event payload (bridged
-# to LAYERS_DIR by handler.py); it points to the per-execution layers root,
-# e.g. /mnt/efs/<computeNodeId>/<runId>/layers/. The actual site-packages
-# path is constructed as: $LAYERS_DIR/<layerName>/lib/python<version>/site-packages
-#
-# Local dev: point QUICK_PLOT_STACK_SITE_PACKAGES at a venv path directly.
-LAYER_NAME = os.environ.get("QUICK_PLOT_LAYER_NAME", "quick-plot-stack")
-LAYER_PYTHON_VERSION = os.environ.get("QUICK_PLOT_LAYER_PYTHON_VERSION", "3.12")
+# Where the scientific stack is: in the image (Dockerfile), or for local dev a venv's
+# site-packages named by QUICK_PLOT_STACK_SITE_PACKAGES.
+STACK_SITE_PACKAGES_DEFAULT = "/opt/plot-stack"
 
 
-def resolve_layer_site_packages() -> str:
-    """Compute the absolute path to the layer's site-packages directory."""
-    # Explicit override wins
-    direct = os.environ.get("QUICK_PLOT_STACK_SITE_PACKAGES", "").strip()
-    if direct:
-        return direct
-    # Platform-injected per-run layers dir
-    layers_dir = os.environ.get("LAYERS_DIR", "").strip()
-    if layers_dir:
-        return os.path.join(layers_dir, LAYER_NAME, "lib", f"python{LAYER_PYTHON_VERSION}", "site-packages")
-    # Last-resort fallback for older deployments
-    return f"/mnt/layers/{LAYER_NAME}/lib/python{LAYER_PYTHON_VERSION}/site-packages"
+def resolve_stack_site_packages() -> str:
+    """The absolute path to the scientific stack's site-packages."""
+    return os.environ.get("QUICK_PLOT_STACK_SITE_PACKAGES", "").strip() or STACK_SITE_PACKAGES_DEFAULT
 
 
-EFS_LAYER_SITE_PACKAGES = resolve_layer_site_packages()
+STACK_SITE_PACKAGES = resolve_stack_site_packages()
 
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("SCRIPT_TIMEOUT_SECONDS", "120"))
 
@@ -73,16 +57,15 @@ def execute_script(script: str, output_path: str) -> ExecutionResult:
         f.write(script)
         script_path = f.name
 
-    # Compose PYTHONPATH: EFS layer first, then existing path
+    # Compose PYTHONPATH: the scientific stack first, then existing path
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
-    if os.path.isdir(EFS_LAYER_SITE_PACKAGES):
-        env["PYTHONPATH"] = f"{EFS_LAYER_SITE_PACKAGES}:{existing_pythonpath}".rstrip(":")
+    if os.path.isdir(STACK_SITE_PACKAGES):
+        env["PYTHONPATH"] = f"{STACK_SITE_PACKAGES}:{existing_pythonpath}".rstrip(":")
     else:
         log.warning(
-            "EFS layer site-packages not found at %s — falling back to ambient Python. "
-            "Production runs will fail without the layer mounted.",
-            EFS_LAYER_SITE_PACKAGES,
+            "Scientific stack not found at %s — falling back to ambient Python.",
+            STACK_SITE_PACKAGES,
         )
 
     log.info("Executing generated script (timeout=%ds, output=%s)", EXECUTION_TIMEOUT_SECONDS, output_path)

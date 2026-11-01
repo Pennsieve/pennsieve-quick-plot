@@ -16,18 +16,18 @@ harvests).
 Why flowio and not flowkit / fcsparser:
 
   - `fcsparser` (the original choice) calls `numpy.ndarray.newbyteorder()`,
-    which NumPy 2.0 removed. The layer's pinned version raises
+    which NumPy 2.0 removed. The stack's pinned version raises
     AttributeError at parse time.
   - `flowkit` works on NumPy 2 but its top-level `__init__` eagerly
     imports gates / Session / Workspace / bokeh — ~20 seconds of import
-    cost on the EFS-mounted layer that we don't need for histograms.
+    cost we don't need for histograms.
   - `flowio` is the lightweight reader that flowkit wraps internally
-    (already on the layer as flowkit's own dep). Imports in <1s; same
+    (already in the stack as flowkit's own dep). Imports in <1s; same
     NumPy-2 compatibility. Exposes everything we need:
     FlowData.as_array(), .pnn_labels, .pns_labels, .event_count.
 
 Deterministic: same input → same output bytes (matplotlib version
-pinned via the EFS layer). No randomness in bin edges; subsampling
+pinned in processor/stack-requirements.txt). No randomness in bin edges; subsampling
 uses a content-derived seed so re-renders of the same file produce
 the same plot.
 """

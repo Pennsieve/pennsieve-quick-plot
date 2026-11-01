@@ -1,28 +1,27 @@
 # Dev / CI dependencies — used to run the test suite locally and in CI.
 # NEVER shipped to production: the Lambda/ECS image installs
-# processor/requirements.txt (slim runtime deps), and the heavy scientific
-# stack (pandas, matplotlib, ...) is provided at runtime by the
-# `quick-plot-stack` EFS layer — see workflows/populate-quick-plot-stack.json.
+# processor/requirements.txt (runtime deps), and the scientific stack (pandas,
+# matplotlib, ...) is in the image at /opt/plot-stack (processor/stack-requirements.txt,
+# pinned; install that for the exact versions).
 #
 # Install:  pip install -r requirements-dev.txt
 
 pytest
 
-# render() imports these at test time. In production they come from the EFS
-# layer, so they are intentionally absent from processor/requirements.txt;
+# render() imports these at test time. In production they come from the image's stack# (processor/stack-requirements.txt), so they are intentionally absent from processor/requirements.txt;
 # we pin them here only so the tests can run on a clean dev machine / CI.
 pandas
 matplotlib
 
 # EDF reader for edf_processed_timeseries. pyedflib reads EDF slices and
-# lives on the EFS layer in production.
+# is in the image's stack in production.
 pyedflib
 
 # NWB reader (readers/nwb_to_signal.py) reads the HDF5 datasets directly
 # with h5py — no pynwb, whose import alone costs ~15 s on a cold Lambda.
-# Also on the EFS layer in production.
+# Also in the image's stack in production.
 h5py
 
 # ts_dsp DSP tools: scipy provides the Butterworth filter (highpass_filter).
-# Also on the EFS layer in production.
+# Also in the image's stack in production.
 scipy

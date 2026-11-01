@@ -2,9 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install runtime deps (slim — heavy scientific deps live on EFS layer `quick-plot-stack`)
+# The processor's own runtime deps.
 COPY processor/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+
+# The scientific stack the generated plotting scripts import, in a folder of its own
+# that only their child process puts on PYTHONPATH (processor/executor.py), so the
+# main process stays lean. Byte-compiled here: Lambda's filesystem is read-only.
+COPY processor/stack-requirements.txt /app/stack-requirements.txt
+RUN pip install --no-cache-dir --target /opt/plot-stack -r stack-requirements.txt \
+    && python -m compileall -q /opt/plot-stack
 
 COPY processor/ /app/processor/
 COPY entrypoint.sh /app/entrypoint.sh
