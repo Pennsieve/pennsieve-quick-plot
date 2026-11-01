@@ -1,6 +1,6 @@
 # pennsieve-quick-plot
 
-Lambda + Fargate dual-mode processor for the `quick-plot` workflow. Given a target data file and a plain-English prompt, asks the Pennsieve LLM Governor for a Python plotting script, runs it against the scientific-Python stack on the `quick-plot-stack` EFS layer, and writes a PNG figure to `OUTPUT_DIR`.
+Lambda + Fargate dual-mode processor for the `quick-plot` workflow. Given a target data file and a plain-English prompt, asks the Pennsieve LLM Governor for a Python plotting script, runs it against the scientific-Python stack in the image, and writes a PNG figure to `OUTPUT_DIR`.
 
 This is the v1 workflow described in [`compute-node-chat/docs/developer/plan-notebook-workflows.md`](../compute-node-chat/docs/developer/plan-notebook-workflows.md) §Part I.
 
@@ -47,8 +47,9 @@ processor/
   prompt.py         # Agent system prompt + user-message builder
   errors.py         # PlotError classes, codes and stages; wrap_unexpected_exception()
   report.py         # PlotRunReport + push_report_to_workflow_service()
-  executor.py       # subprocess that runs the agent's generated script with EFS layer on PYTHONPATH
-  requirements.txt  # awslambdaric, pennsieve-llm, boto3 (heavy deps live on the EFS layer)
+  executor.py       # subprocess that runs the agent's generated script with the scientific stack on PYTHONPATH
+  requirements.txt  # awslambdaric, pennsieve-llm, boto3
+  stack-requirements.txt  # the scientific stack, pinned; installed in the image at /opt/plot-stack
   schema.py         # emits schema/templates.json + schema/ts_tools.json (`make schemas`)
   templates/        # canned per-format render functions (no LLM)
     __init__.py     # registry — { NAME → module }
@@ -79,10 +80,9 @@ schema/             # generated schemas (`make schemas`) — pennsieve-mcp vendo
 workflows/
   plot-templates.json                # main workflow (single-stage; Lambda; the v0.6+ product)
   quick-plot.json                    # legacy agent-only workflow (kept for backwards compat)
-  populate-quick-plot-stack.json     # one-time layer-population workflow (Fargate; admin-triggered)
   README.md                          # deployment notes for the JSONs
 entrypoint.sh       # Runtime detection (Lambda vs ECS)
-Dockerfile          # Slim python 3.12 image with Lambda RIC + MPLCONFIGDIR=/tmp/matplotlib
+Dockerfile          # python 3.12 image: Lambda RIC, the scientific stack in /opt/plot-stack, MPLCONFIGDIR=/tmp/matplotlib
 docker-compose.yml  # Local dev runner
 dev.env             # Local env vars
 Makefile            # make build / run / clean / schemas
@@ -176,9 +176,9 @@ The rule:
 - Module top: `math`, stdlib, `NAME`, `SUPPORTED_EXTENSIONS`. Nothing else.
 - Inside `render()`: matplotlib, format-specific parsers, pandas, numpy, anything else.
 
-Prefer narrow import paths when a package has a heavy `__init__`. For example, `import flowkit` triggers eager imports of bokeh / gates / Session (~30s cold-start on EFS); `import flowio` (the lightweight parser flowkit wraps) imports in <1s. The v0.6.2 perf gain came from honoring this rule.
+Prefer narrow import paths when a package has a heavy `__init__`. For example, `import flowkit` triggers eager imports of bokeh / gates / Session (~30s cold-start); `import flowio` (the lightweight parser flowkit wraps) imports in <1s. The v0.6.2 perf gain came from honoring this rule.
 
-If you're adding a dep that isn't already on the EFS layer, also append it to [`workflows/populate-quick-plot-stack.json`](workflows/populate-quick-plot-stack.json)'s `REQUIREMENTS` field and re-run that workflow once per compute node. Test cold-start time after — if `import yourdep` takes more than 2–3 seconds on the layer-mounted EFS, look for a lighter alternative.
+If you're adding a dep that isn't already in the scientific stack, add it, pinned, to [`processor/stack-requirements.txt`](processor/stack-requirements.txt) (and to `processor/prompt.py`'s list if the agent may use it) and release a new version. Test cold-start time after — if `import yourdep` takes more than 2–3 seconds, look for a lighter alternative.
 
 ## DSP pipeline tools (`processor/tools/ts_dsp/`)
 
@@ -219,7 +219,6 @@ The workflow definitions consumed by `workflow-service` live in `workflows/`:
 
 - **`plot-templates.json`** — the main workflow (v0.6+). Single stage; Lambda; canned-template-first with agent fallback; viewer-asset data-target. The two-stage form with processor-plot-prep in front (MEF → NWB, everything else passed through) is tested from that repo's `workflows/` and moves here once it is the production definition.
 - **`quick-plot.json`** — the legacy agent-only workflow (kept for backwards compat).
-- **`populate-quick-plot-stack.json`** — one-time layer-population workflow. Uses `processor-build-python-layer` (a separate repo) + `persistent-layer` data-target to install the scientific Python stack into the `quick-plot-stack` EFS layer.
 
 Workflow definition registration is API-only in workflow-service today — the JSONs are POSTed to `/definitions` at deploy time. See [`workflows/README.md`](workflows/README.md) for details and open questions.
 
@@ -250,8 +249,8 @@ For local LLM calls, set `LLM_GOVERNOR_URL` in `dev.env` to a real Function URL 
 | `AGENT_BASH_TIMEOUT_SECONDS` | container override | function config | Per-`bash` tool call timeout. Default 60. |
 | `AGENT_TOOL_OUTPUT_MAX_BYTES` | container override | function config | Truncate tool output before feeding back to the model. Default 16384. |
 | `SCRIPT_TIMEOUT_SECONDS` | container override | function config | Per-execution timeout for STUB_MODE scripts only. Default 120. |
-| `QUICK_PLOT_STACK_SITE_PACKAGES` | container override | function config | Override the EFS layer mount path (defaults to `/mnt/layers/quick-plot-stack/lib/python3.12/site-packages`). |
-| `STUB_MODE` | container override | function config | When `1`, bypass the agent loop and run a built-in stub script (used to smoke-test the EFS-layer + viewer-asset chain). |
+| `QUICK_PLOT_STACK_SITE_PACKAGES` | container override | function config | Where the scientific stack is (defaults to `/opt/plot-stack`, in the image); for local dev, a venv's site-packages. |
+| `STUB_MODE` | container override | function config | When `1`, bypass the agent loop and run a built-in stub script (used to smoke-test the scientific stack + viewer-asset chain). |
 | `PENNSIEVE_API_HOST`, `PENNSIEVE_API_HOST2`, `ENVIRONMENT`, `REGION`, `DEPLOYMENT_MODE` | container override | function config (static) | Platform standards |
 
 ## Outputs
@@ -303,9 +302,9 @@ The run record is what `pennsieve-mcp` polls (`GET /runs/{id}`) and what the com
 
 **Fallback gate** (`main.FAIL_FAST`). `invalid_input`, `data_unavailable` and `resource_limit` template failures stop the run with the template's own message (~4 s): the user can act on them, and a ~30 s agent detour would only hide them. `environment` / `internal` fall back to the agent loop as before, with the reason recorded.
 
-## EFS layer dependency
+## The scientific stack
 
-The processor *will not run* without the `quick-plot-stack` EFS layer mounted. The layer provides the scientific-Python stack:
+The image carries the scientific-Python stack the templates and the generated scripts import, in `/opt/plot-stack` ([`processor/stack-requirements.txt`](processor/stack-requirements.txt), pinned):
 
 - Plotting: `matplotlib`, `seaborn`
 - Tabular: `pandas`, `numpy`, `scipy`
@@ -316,7 +315,7 @@ The processor *will not run* without the `quick-plot-stack` EFS layer mounted. T
 - R interop: `pyreadr`
 - General: `pyarrow`, `h5py`
 
-The layer is provisioned and populated separately (see workflow-service docs on EFS layers). At run time, the workflow request includes `"layers": ["quick-plot-stack"]` which causes the provisioner to mount the layer at `/mnt/layers/quick-plot-stack/`. The executor injects the layer's site-packages into the script subprocess's `PYTHONPATH`.
+It's a folder of its own, not the image's site-packages, so the main process stays lean: the executor and the agent's `bash` tool put it on the script subprocess's `PYTHONPATH`, and canned templates add it to `sys.path` when they run. Until v0.8.0 it was the EFS layer `quick-plot-stack`, which runs had to name (`"layers": ["quick-plot-stack"]`) and which Lambda steps on nodes with run data on S3 couldn't reach; the versions are the layer's, plus `pyedflib`, which the layer lacked.
 
 ## LLM Governor integration
 
@@ -354,6 +353,5 @@ The agent inspects the target file with shell + Python first, then writes plotti
 - [ ] Add Jenkinsfile when CI location is confirmed (probably mirrors other processor repos)
 - [ ] Confirm the exact payload key name the platform uses for `prompt` (lowercase vs camelCase) and update handler.py accordingly
 - [ ] Confirm whether `processorParams` arrive as top-level event keys or nested under a `processorParams` field (this affects how handler.py reads `prompt` and `target_file_name`)
-- [ ] Validate the EFS layer mount path matches what the platform produces in production
 - [ ] Smoke-test against a real Pennsieve LLM Governor Function URL
 - [ ] Add file-extension allowlist with friendly errors (per plan §I.10 q4)

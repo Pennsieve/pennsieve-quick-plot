@@ -43,7 +43,6 @@ _PAYLOAD_TO_ENV = {
     "callbackToken": "CALLBACK_TOKEN",
     "refreshToken": "REFRESH_TOKEN",
     "llmGovernorFunction": "LLM_GOVERNOR_URL",
-    "layersDir": "LAYERS_DIR",
     "template": "TEMPLATE",
     "template_args": "TEMPLATE_ARGS",
     "prompt": "PROMPT",

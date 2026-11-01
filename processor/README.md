@@ -283,7 +283,7 @@ Total: a few seconds, and the template's own sentence reaches the run record.
 
 ### Route B — fall back: the compute node is missing a library
 
-Same request, correct channel, but the EFS layer lacks `pyedflib`.
+Same request, correct channel, but the scientific stack lacks a library the reader imports (say `pyedflib`).
 
 1. **Step 2, `load_signal()`** — `import pyedflib` inside the reader raises a
    plain `ImportError`. Nobody in our code raised it, so it is not yet a

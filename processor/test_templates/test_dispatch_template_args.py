@@ -31,7 +31,7 @@ def _run(monkeypatch, tmp_path, template_args):
     stub = _StubTemplate()
     monkeypatch.setattr("processor.templates.get", lambda name: stub)
     # The stub carries its own (no-op) deps; skip the EFS sys.path shuffle.
-    monkeypatch.setattr(main, "setup_layer_python_path", lambda: None)
+    monkeypatch.setattr(main, "setup_stack_python_path", lambda: None)
 
     target = tmp_path / "rec.edf"
     target.write_bytes(b"x")
